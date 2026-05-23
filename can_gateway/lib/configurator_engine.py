@@ -57,6 +57,7 @@ from protocol_constants import (
 
 _LOGGER = logging.getLogger(__name__)
 
+SHUTTER_DIRECTION_TEXT = {0: "stopped", 1: "opening", 2: "closing"}
 ROLE_NAME_BY_CODE = {v: k for k, v in PIN_ROLE_MAP.items()}
 TAB_MODULES = 1
 TAB_GPIO = 2
@@ -105,6 +106,7 @@ class ModuleContext:
     virtual_relay_values: dict[int, int] = field(default_factory=dict)
     relay_pulse_ms_by_index: dict[int, int] = field(default_factory=dict)
     shutter_relay_pairs: dict[int, dict[str, int]] = field(default_factory=dict)
+    shutter_states: dict[int, dict[str, int]] = field(default_factory=dict)
     mcp_relay_pins: dict[int, set[int]] = field(default_factory=dict)
     mcp23017_found_mask: int = 0
     shift595_q_flags: dict[int, int] = field(default_factory=dict)
@@ -218,6 +220,9 @@ class ConfiguratorEngine:
                 if build:
                     self.context(module_id).firmware_build = build
 
+            if touched_ids:
+                self.collect_relay_state_frames(0.6)
+
             self._io.sync_transport_macs()
             count = len(self.discovered_modules)
             self._last_scan_status = "ok"
@@ -295,8 +300,16 @@ class ConfiguratorEngine:
             return self._apply_mcp_relays_frame(ctx, payload)
         if message.arbitration_id == CAN_ID_SHUTTER_STATUS and len(payload) >= 4:
             sid = int(payload[1])
+            if sid < 1 or sid > MAX_SHUTTERS:
+                return False
+            pos = int(payload[2])
+            direction = int(payload[3])
             ctx.shutter_relay_pairs.setdefault(sid, {})
-            self._io.notify()
+            prev = ctx.shutter_states.get(sid)
+            new_state = {"position": pos, "direction": direction}
+            ctx.shutter_states[sid] = new_state
+            if prev != new_state:
+                self._io.notify()
             return True
         if message.arbitration_id == CAN_ID_SENSORS and len(payload) >= 7:
             ctx.sensors.append(
@@ -345,14 +358,14 @@ class ConfiguratorEngine:
             elif resp is not None and len(resp) >= 3 and int(resp[2]) != 0:
                 return {"ok": False, "error": f"status={int(resp[2])}", "module_id": mid, "relay_no": rn}
             else:
-                self.collect_relay_state_frames(0.12)
+                self.collect_relay_state_frames(0.35)
                 is_on = bool(self.context(mid).virtual_relay_values.get(rn, 0))
                 if resp is None and rn not in self.context(mid).virtual_relay_values:
                     return {"ok": False, "error": "no response", "module_id": mid, "relay_no": rn}
             if pulse_ms > 0 and code == 1 and is_on:
                 threading.Timer(max(0.05, (pulse_ms + 80) / 1000.0), lambda: self._pulse_resync(mid, rn)).start()
             elif code in (0, 1):
-                self.collect_relay_state_frames(0.15)
+                self.collect_relay_state_frames(0.35)
             self._io.notify()
             return {"ok": True, "module_id": mid, "relay_no": rn, "state": state, "on": is_on, "pulse_ms": pulse_ms}
         finally:
@@ -405,9 +418,18 @@ class ConfiguratorEngine:
                 idx = int(info.get("index", 0))
                 if idx > 0:
                     relay_gpio_map[idx] = gpio
+        shutters = [
+            {
+                "shutter_no": sid,
+                "position": st.get("position"),
+                "direction": st.get("direction"),
+                "direction_text": SHUTTER_DIRECTION_TEXT.get(st.get("direction"), "unknown"),
+            }
+            for sid, st in sorted(ctx.shutter_states.items())
+        ]
         runtime = {
             "relays": relays,
-            "shutters": [],
+            "shutters": shutters,
             "shutter_map": shutter_map,
             "relay_gpio_map": {str(k): v for k, v in relay_gpio_map.items()},
             "relay_pulse_ms": {str(k): v for k, v in ctx.relay_pulse_ms_by_index.items()},
@@ -667,7 +689,7 @@ class ConfiguratorEngine:
             if resp is None or len(resp) < 7 or resp[2] != 0 or resp[6] != 1:
                 continue
             self._store_relay_state(mid, relay_index, int(resp[3]))
-        self.collect_relay_state_frames(0.55)
+        self.collect_relay_state_frames(0.75)
 
     def sync_relay_pulse_cache(self, *, force: bool = False) -> None:
         mid = self.current_module_id
@@ -822,35 +844,60 @@ class ConfiguratorEngine:
     def _apply_relays_frame(self, ctx: ModuleContext, payload: list[int]) -> bool:
         if len(payload) < 3:
             return False
-        lo = payload[1]
-        hi = payload[2]
+        lo = int(payload[1])
+        hi = int(payload[2])
         ext_bytes = payload[3:]
         ext_bits = 0
         for byte_index, byte_value in enumerate(ext_bytes):
-            ext_bits |= (byte_value & 0xFF) << (8 * byte_index)
+            ext_bits |= (int(byte_value) & 0xFF) << (8 * byte_index)
         changed = False
-        for gpio, info in ctx.gpio_info.items():
-            if info.get("role") != PIN_ROLE_MAP["Relay"]:
-                continue
-            relay_index = int(info.get("index", 0))
-            if relay_index <= 0:
-                continue
+
+        def _set_relay(relay_index: int, relay_on: int) -> None:
+            nonlocal changed
+            relay_index = int(relay_index)
+            relay_on = int(relay_on)
+            if ctx.virtual_relay_values.get(relay_index) != relay_on:
+                changed = True
+            ctx.virtual_relay_values[relay_index] = relay_on
+
+        for relay_index in range(1, 17):
             if relay_index <= 8:
                 relay_on = 1 if (lo & (1 << (relay_index - 1))) else 0
-            elif relay_index <= 16:
-                relay_on = 1 if (hi & (1 << (relay_index - 9))) else 0
             else:
-                shift_offset = relay_index - SHIFT595_RELAY_BASE_INDEX
-                relay_on = 1 if (ext_bits & (1 << shift_offset)) else 0
-            ctx.virtual_relay_values[relay_index] = relay_on
-            changed = True
+                relay_on = 1 if (hi & (1 << (relay_index - 9))) else 0
+            _set_relay(relay_index, relay_on)
+
         regs = (ctx.hw_flags >> 4) & 0x07
+        if regs <= 0 and ext_bytes:
+            regs = len(ext_bytes)
         if regs > 0:
             total = regs * SHIFT595_RELAY_COUNT_PER_REGISTER
             for relay_index in range(SHIFT595_RELAY_BASE_INDEX, SHIFT595_RELAY_BASE_INDEX + total):
                 shift_offset = relay_index - SHIFT595_RELAY_BASE_INDEX
-                ctx.virtual_relay_values[relay_index] = 1 if (ext_bits & (1 << shift_offset)) else 0
-            changed = True
+                relay_on = 1 if (ext_bits & (1 << shift_offset)) else 0
+                _set_relay(relay_index, relay_on)
+
+        if ctx.gpio_info:
+            for gpio, info in ctx.gpio_info.items():
+                if info.get("role") != PIN_ROLE_MAP["Relay"]:
+                    continue
+                relay_index = int(info.get("index", 0))
+                if relay_index <= 0:
+                    continue
+                relay_on = int(ctx.virtual_relay_values.get(relay_index, 0))
+                flags = int(info.get("flags", 0))
+                active_high = (flags & 0x01) == 0
+                raw = relay_on if active_high else (0 if relay_on else 1)
+                new_val = {
+                    "logical": relay_on,
+                    "raw": raw,
+                    "role": PIN_ROLE_MAP["Relay"],
+                    "index": relay_index,
+                }
+                if ctx.gpio_values.get(gpio) != new_val:
+                    changed = True
+                ctx.gpio_values[gpio] = new_val
+
         if changed:
             self._io.notify()
         return changed
