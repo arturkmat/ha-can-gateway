@@ -241,7 +241,12 @@ def create_app(bus: BusManager) -> web.Application:
     return app
 
 
-async def run_server(bus: BusManager, host: str = "0.0.0.0", port: int = 8099) -> None:
+async def run_server(
+    bus: BusManager,
+    host: str = "0.0.0.0",
+    port: int = 8099,
+    shutdown: asyncio.Event | None = None,
+) -> None:
     options = load_options()
     app = create_app(bus)
     runner = web.AppRunner(app)
@@ -253,15 +258,39 @@ async def run_server(bus: BusManager, host: str = "0.0.0.0", port: int = 8099) -
     mqtt = MqttBridge(bus, options)
     await mqtt.start()
 
+    background: list[asyncio.Task] = []
+    if bus.bus_ok:
+        background.append(asyncio.create_task(_initial_scan(bus)))
     if options.auto_scan:
-        asyncio.create_task(_auto_scan_loop(bus, options.auto_scan_interval_s))
+        background.append(asyncio.create_task(_auto_scan_loop(bus, options.auto_scan_interval_s)))
 
     try:
-        while True:
-            await asyncio.sleep(3600)
+        if shutdown is not None:
+            await shutdown.wait()
+        else:
+            while True:
+                await asyncio.sleep(3600)
     finally:
+        for task in background:
+            task.cancel()
+        for task in background:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         await mqtt.stop()
         await runner.cleanup()
+
+
+async def _initial_scan(bus: BusManager) -> None:
+    await asyncio.sleep(0.5)
+    _LOGGER.info("Running initial discovery scan (konfigurator F5)...")
+    try:
+        result = await asyncio.to_thread(bus.discovery_scan)
+        if not result.get("ok"):
+            _LOGGER.warning("Initial discovery scan failed: %s", result.get("error"))
+    except Exception:  # noqa: BLE001
+        _LOGGER.error("Initial discovery scan error", exc_info=True)
 
 
 async def _auto_scan_loop(bus: BusManager, interval_s: int) -> None:

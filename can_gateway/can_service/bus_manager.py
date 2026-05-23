@@ -90,6 +90,7 @@ class BusManager:
     def __init__(self, options: AddonOptions) -> None:
         self._options = options
         self._lock = threading.RLock()
+        self._io_lock = threading.Lock()
         self._bus = None
         self._transport: SecureCanTransport | None = None
         self._modules: dict[int, ModuleRecord] = {}
@@ -246,13 +247,49 @@ class BusManager:
         _LOGGER.error(self._bus_error)
 
     def _close_bus(self) -> None:
+        bus = None
         try:
-            if self._bus is not None:
-                self._bus.shutdown()
+            with self._io_lock:
+                bus = self._bus
+                self._bus = None
         except Exception:  # noqa: BLE001
-            _LOGGER.debug("bus shutdown error", exc_info=True)
-        finally:
-            self._bus = None
+            _LOGGER.debug("bus close error", exc_info=True)
+        if bus is not None:
+            try:
+                bus.shutdown()
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("bus shutdown error", exc_info=True)
+
+    def _on_io_error(self, err: Exception) -> None:
+        _LOGGER.error("CAN I/O error: %s", err)
+        with self._lock:
+            self._bus_error = str(err)
+        self._close_bus()
+
+    def _recv(self, timeout: float):
+        if self._bus is None:
+            return None
+        try:
+            with self._io_lock:
+                if self._bus is None:
+                    return None
+                return self._bus.recv(timeout=timeout)
+        except Exception as err:  # noqa: BLE001
+            self._on_io_error(err)
+            return None
+
+    def _send_message(self, message) -> bool:
+        if self._bus is None:
+            return False
+        try:
+            with self._io_lock:
+                if self._bus is None:
+                    return False
+                self._bus.send(message)
+            return True
+        except Exception as err:  # noqa: BLE001
+            self._on_io_error(err)
+            return False
 
     def _normalize_message(self, message):
         if message is None:
@@ -415,10 +452,7 @@ class BusManager:
         while time.time() < deadline:
             if self._bus is None:
                 return None
-            try:
-                message = self._bus.recv(timeout=min(0.05, max(0.0, deadline - time.time())))
-            except Exception:  # noqa: BLE001
-                continue
+            message = self._recv(min(0.05, max(0.0, deadline - time.time())))
             if message is None:
                 continue
             with self._lock:
@@ -502,11 +536,7 @@ class BusManager:
             if self._bus is None:
                 time.sleep(0.3)
                 continue
-            try:
-                message = self._bus.recv(timeout=0.1)
-            except Exception:  # noqa: BLE001
-                time.sleep(0.2)
-                continue
+            message = self._recv(0.1)
             if message is None:
                 continue
             with self._lock:
@@ -515,7 +545,7 @@ class BusManager:
     def pump_rx(self, timeout: float = 0.05) -> None:
         if self._bus is None:
             return
-        msg = self._bus.recv(timeout=timeout)
+        msg = self._recv(timeout)
         if msg is None:
             return
         with self._lock:
@@ -525,7 +555,7 @@ class BusManager:
         if self._bus is None:
             return
         while True:
-            msg = self._bus.recv(timeout=0.02)
+            msg = self._recv(0.02)
             if msg is None:
                 break
             with self._lock:
@@ -554,13 +584,15 @@ class BusManager:
         import can
 
         for frame_id, frame_data in frames:
-            self._bus.send(
+            ok = self._send_message(
                 can.Message(
                     arbitration_id=int(frame_id),
                     is_extended_id=True,
                     data=frame_data,
                 )
             )
+            if not ok:
+                return False
         return True
 
     def set_relay_state(self, module_id: int, relay_no: int, state: str) -> dict[str, Any]:
@@ -613,33 +645,42 @@ class BusManager:
             self._last_scan_status = "error"
             return {"ok": False, "error": self._bus_error or "bus not open"}
 
-        with self._lock:
-            before = len(self._modules)
-            self._drain_rx()
-            for attempt in range(_BROADCAST_ATTEMPTS):
-                self.send_config(0xFF, COMMAND_GET_SUMMARY)
-                if attempt < _BROADCAST_ATTEMPTS - 1:
-                    time.sleep(_BROADCAST_GAP_S)
+        try:
+            with self._lock:
+                before = len(self._modules)
+                self._drain_rx()
+                for attempt in range(_BROADCAST_ATTEMPTS):
+                    self.send_config(0xFF, COMMAND_GET_SUMMARY)
+                    if attempt < _BROADCAST_ATTEMPTS - 1:
+                        time.sleep(_BROADCAST_GAP_S)
 
-        deadline = time.time() + _PASSIVE_LISTEN_S
-        while time.time() < deadline:
-            self.pump_rx(min(0.05, max(0.0, deadline - time.time())))
+            deadline = time.time() + _PASSIVE_LISTEN_S
+            while time.time() < deadline:
+                if self._bus is None:
+                    raise RuntimeError(self._bus_error or "bus closed during scan")
+                self.pump_rx(min(0.05, max(0.0, deadline - time.time())))
 
-        with self._lock:
-            for module_id in sorted(self._modules.keys()):
-                self.send_config(module_id, COMMAND_GET_SUMMARY)
-                time.sleep(0.15)
-                self.send_config(module_id, COMMAND_GET_MODULE_NAME)
-                time.sleep(_NAME_READ_GAP_S)
-                self.send_config(module_id, COMMAND_GET_BUILD_INFO)
-                time.sleep(_NAME_READ_GAP_S)
-                dl = time.time() + 0.6
-                while time.time() < dl:
-                    self.pump_rx(0.05)
+            with self._lock:
+                for module_id in sorted(self._modules.keys()):
+                    self.send_config(module_id, COMMAND_GET_SUMMARY)
+                    time.sleep(0.15)
+                    self.send_config(module_id, COMMAND_GET_MODULE_NAME)
+                    time.sleep(_NAME_READ_GAP_S)
+                    self.send_config(module_id, COMMAND_GET_BUILD_INFO)
+                    time.sleep(_NAME_READ_GAP_S)
+                    dl = time.time() + 0.6
+                    while time.time() < dl:
+                        if self._bus is None:
+                            raise RuntimeError(self._bus_error or "bus closed during scan")
+                        self.pump_rx(0.05)
 
-            count = len(self._modules)
-            self._last_scan_status = "ok"
-            self._last_scan_at = time.time()
+                count = len(self._modules)
+                self._last_scan_status = "ok"
+                self._last_scan_at = time.time()
 
-        _LOGGER.info("Discovery scan finished: modules=%d (was %d)", count, before)
-        return {"ok": True, "modules_before": before, "modules_after": count, "modules": self.list_modules()}
+            _LOGGER.info("Discovery scan finished: modules=%d (was %d)", count, before)
+            return {"ok": True, "modules_before": before, "modules_after": count, "modules": self.list_modules()}
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.error("Discovery scan failed: %s", err, exc_info=True)
+            self._last_scan_status = "error"
+            return {"ok": False, "error": str(err)}

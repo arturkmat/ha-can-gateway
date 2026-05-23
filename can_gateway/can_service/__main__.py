@@ -23,22 +23,18 @@ def main() -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
+    shutdown = asyncio.Event()
+
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
-            loop.add_signal_handler(sig, loop.stop)
+            loop.add_signal_handler(sig, shutdown.set)
         except NotImplementedError:
             pass
 
-    async def startup() -> None:
-        if bus.bus_ok:
-            _LOGGER.info("Running initial discovery scan (konfigurator F5)...")
-            await asyncio.to_thread(bus.discovery_scan)
-        else:
-            _LOGGER.error("CAN bus not available — panel dziala, skan po podlaczeniu USB")
-
     async def run() -> None:
-        await startup()
-        await run_server(bus)
+        if not bus.bus_ok:
+            _LOGGER.error("CAN bus not available — panel dziala, skan po podlaczeniu USB")
+        await run_server(bus, shutdown=shutdown)
 
     try:
         loop.run_until_complete(run())
