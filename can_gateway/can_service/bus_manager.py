@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import glob
 import logging
 import threading
 import time
@@ -106,6 +107,11 @@ class BusManager:
         self._last_scan_status: str = "never"
         self._last_scan_at: float | None = None
         self._frame_listeners: list[Callable[[], None]] = []
+        self._rx_enabled = threading.Event()
+        self._rx_enabled.set()
+        self._scan_lock = threading.Lock()
+        self._reconnect_thread: threading.Thread | None = None
+        self._active_port: str | None = None
 
     def start(self) -> None:
         master = self._options.master_key_bytes
@@ -117,9 +123,14 @@ class BusManager:
         self._open_bus()
         self._rx_thread = threading.Thread(target=self._rx_loop, name="can-rx", daemon=True)
         self._rx_thread.start()
+        self._reconnect_thread = threading.Thread(target=self._reconnect_loop, name="can-reconnect", daemon=True)
+        self._reconnect_thread.start()
 
     def stop(self) -> None:
         self._stop.set()
+        self._rx_enabled.set()
+        if self._reconnect_thread is not None:
+            self._reconnect_thread.join(timeout=2.0)
         if self._rx_thread is not None:
             self._rx_thread.join(timeout=2.0)
         self._close_bus()
@@ -144,14 +155,15 @@ class BusManager:
                 "bus_ok": self.bus_ok,
                 "bus_error": self._bus_error,
                 "can_interface": self._options.can_interface,
-                "can_port": self._options.can_port,
+                "can_port": self._active_port or self._options.can_port,
+                "configured_port": self._options.can_port,
                 "gsusb_channel": self._options.gsusb_channel,
                 "can_bitrate": self._options.can_bitrate,
                 "secure_enabled": self._transport is not None,
                 "module_count": len(self._modules),
                 "last_scan_status": self._last_scan_status,
                 "last_scan_at": self._last_scan_at,
-                "version": "0.3.1",
+                "version": "0.3.8",
                 "mqtt_enabled": self._options.mqtt_enabled,
             }
 
@@ -206,6 +218,52 @@ class BusManager:
             nums.difference_update(reserved)
             return nums or set(range(1, 17))
 
+    def _slcan_port_candidates(self) -> list[str]:
+        ports: list[str] = []
+        configured = str(self._options.can_port or "").strip()
+        if configured:
+            ports.append(configured)
+        for pattern in ("/dev/serial/by-id/*", "/dev/ttyACM*", "/dev/ttyUSB*"):
+            try:
+                for path in sorted(glob.glob(pattern)):
+                    if path not in ports:
+                        ports.append(path)
+            except OSError:
+                continue
+        return ports
+
+    def ensure_bus(self) -> bool:
+        if self._bus is not None and self._bus_error is None:
+            return True
+        return self._try_reopen()
+
+    def _try_reopen(self) -> bool:
+        if self._stop.is_set():
+            return False
+        self._close_bus()
+        self._open_bus()
+        if self._bus is not None:
+            with self._lock:
+                self._bus_error = None
+            _LOGGER.info("CAN bus reconnected (%s)", self._active_port or self._options.can_port)
+            return True
+        return False
+
+    def _reconnect_loop(self) -> None:
+        while not self._stop.wait(5.0):
+            if self._bus is None:
+                self._try_reopen()
+
+    def _begin_exclusive_io(self) -> bool:
+        if not self._scan_lock.acquire(blocking=False):
+            return False
+        self._rx_enabled.clear()
+        return True
+
+    def _end_exclusive_io(self) -> None:
+        self._rx_enabled.set()
+        self._scan_lock.release()
+
     def _open_bus(self) -> None:
         import can
 
@@ -230,26 +288,38 @@ class BusManager:
             self._bus_error = f"Nieobsługiwany can_interface: {iface}"
             return
 
-        port = self._options.can_port
         last_err: Exception | None = None
-        candidates: list[int] = []
+        baud_candidates: list[int] = []
         for baud in (self._options.tty_baudrate, *SERIAL_BAUD_CANDIDATES):
-            if baud not in candidates:
-                candidates.append(baud)
-        for serial_baud in candidates:
+            if baud not in baud_candidates:
+                baud_candidates.append(baud)
+        for port in self._slcan_port_candidates():
+            if not port:
+                continue
             try:
-                self._bus = can.Bus(
-                    interface="slcan",
-                    channel=port,
-                    bitrate=bitrate,
-                    ttyBaudrate=serial_baud,
-                )
-                self._bus_error = None
-                _LOGGER.info("SLCAN open %s @ %d (CAN %d)", port, serial_baud, bitrate)
-                return
-            except Exception as err:  # noqa: BLE001
-                last_err = err
-        self._bus_error = f"Cannot open SLCAN on {port}: {last_err}"
+                import os
+
+                if not os.path.exists(port):
+                    continue
+            except OSError:
+                continue
+            for serial_baud in baud_candidates:
+                try:
+                    self._bus = can.Bus(
+                        interface="slcan",
+                        channel=port,
+                        bitrate=bitrate,
+                        ttyBaudrate=serial_baud,
+                    )
+                    self._active_port = port
+                    self._bus_error = None
+                    _LOGGER.info("SLCAN open %s @ %d (CAN %d)", port, serial_baud, bitrate)
+                    return
+                except Exception as err:  # noqa: BLE001
+                    last_err = err
+        configured = self._options.can_port
+        self._active_port = None
+        self._bus_error = f"Cannot open SLCAN (configured {configured}): {last_err}"
         _LOGGER.error(self._bus_error)
 
     def _close_bus(self) -> None:
@@ -267,10 +337,11 @@ class BusManager:
                 _LOGGER.debug("bus shutdown error", exc_info=True)
 
     def _on_io_error(self, err: Exception) -> None:
-        _LOGGER.error("CAN I/O error: %s", err)
+        _LOGGER.warning("CAN I/O error — closing port, reconnect pending: %s", err)
         with self._lock:
             self._bus_error = str(err)
         self._close_bus()
+        self._active_port = None
 
     def _recv(self, timeout: float):
         if self._bus is None:
@@ -548,6 +619,9 @@ class BusManager:
             if self._bus is None:
                 time.sleep(0.3)
                 continue
+            if not self._rx_enabled.is_set():
+                time.sleep(0.05)
+                continue
             message = self._recv(0.1)
             if message is None:
                 continue
@@ -581,7 +655,7 @@ class BusManager:
         return self.send_raw(CAN_ID_CONFIG_REQUEST, payload)
 
     def send_raw(self, can_id: int, data: list[int]) -> bool:
-        if self._bus is None:
+        if not self.ensure_bus():
             return False
         module_id = int(data[0]) if data else 0xFF
         with self._lock:
@@ -608,6 +682,8 @@ class BusManager:
         return True
 
     def set_relay_state(self, module_id: int, relay_no: int, state: str) -> dict[str, Any]:
+        if not self.ensure_bus():
+            return {"ok": False, "error": self._bus_error or "bus not open"}
         state_map = {"on": 1, "off": 0, "toggle": 2}
         code = state_map.get(str(state).lower())
         if code is None:
@@ -643,7 +719,14 @@ class BusManager:
         return self.send_config(0xFF, COMMAND_GET_SUMMARY)
 
     def refresh_module(self, module_id: int) -> dict[str, Any]:
-        return _refresh_module_deep_impl(self, module_id)
+        if not self.ensure_bus():
+            return {"ok": False, "error": self._bus_error or "bus not open"}
+        if not self._begin_exclusive_io():
+            return {"ok": False, "error": "bus busy (scan/refresh in progress)"}
+        try:
+            return _refresh_module_deep_impl(self, module_id)
+        finally:
+            self._end_exclusive_io()
 
     def reboot_module(self, module_id: int) -> dict[str, Any]:
         mid = int(module_id)
@@ -653,39 +736,42 @@ class BusManager:
         return {"ok": ok, "module_id": mid}
 
     def discovery_scan(self) -> dict[str, Any]:
-        if self._bus is None:
+        if not self.ensure_bus():
             self._last_scan_status = "error"
             return {"ok": False, "error": self._bus_error or "bus not open"}
+        if not self._begin_exclusive_io():
+            return {"ok": False, "error": "scan already in progress"}
 
         try:
             with self._lock:
                 before = len(self._modules)
-                self._drain_rx()
-                for attempt in range(_BROADCAST_ATTEMPTS):
-                    self.send_config(0xFF, COMMAND_GET_SUMMARY)
-                    if attempt < _BROADCAST_ATTEMPTS - 1:
-                        time.sleep(_BROADCAST_GAP_S)
+            self._drain_rx()
+            for attempt in range(_BROADCAST_ATTEMPTS):
+                self.send_config(0xFF, COMMAND_GET_SUMMARY)
+                if attempt < _BROADCAST_ATTEMPTS - 1:
+                    time.sleep(_BROADCAST_GAP_S)
 
             deadline = time.time() + _PASSIVE_LISTEN_S
             while time.time() < deadline:
-                if self._bus is None:
+                if self._bus is None and not self.ensure_bus():
                     raise RuntimeError(self._bus_error or "bus closed during scan")
                 self.pump_rx(min(0.05, max(0.0, deadline - time.time())))
 
-            with self._lock:
-                for module_id in sorted(self._modules.keys()):
-                    self.send_config(module_id, COMMAND_GET_SUMMARY)
-                    time.sleep(0.15)
-                    self.send_config(module_id, COMMAND_GET_MODULE_NAME)
-                    time.sleep(_NAME_READ_GAP_S)
-                    self.send_config(module_id, COMMAND_GET_BUILD_INFO)
-                    time.sleep(_NAME_READ_GAP_S)
-                    dl = time.time() + 0.6
-                    while time.time() < dl:
-                        if self._bus is None:
-                            raise RuntimeError(self._bus_error or "bus closed during scan")
-                        self.pump_rx(0.05)
+            module_ids = sorted(self._modules.keys())
+            for module_id in module_ids:
+                self.send_config(module_id, COMMAND_GET_SUMMARY)
+                time.sleep(0.15)
+                self.send_config(module_id, COMMAND_GET_MODULE_NAME)
+                time.sleep(_NAME_READ_GAP_S)
+                self.send_config(module_id, COMMAND_GET_BUILD_INFO)
+                time.sleep(_NAME_READ_GAP_S)
+                dl = time.time() + 0.6
+                while time.time() < dl:
+                    if self._bus is None and not self.ensure_bus():
+                        raise RuntimeError(self._bus_error or "bus closed during scan")
+                    self.pump_rx(0.05)
 
+            with self._lock:
                 count = len(self._modules)
                 self._last_scan_status = "ok"
                 self._last_scan_at = time.time()
@@ -696,3 +782,5 @@ class BusManager:
             _LOGGER.error("Discovery scan failed: %s", err, exc_info=True)
             self._last_scan_status = "error"
             return {"ok": False, "error": str(err)}
+        finally:
+            self._end_exclusive_io()

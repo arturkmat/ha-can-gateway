@@ -16,6 +16,11 @@ bashio::log.info "Interface=${CAN_INTERFACE} port=${CAN_PORT} CAN=${CAN_BITRATE}
 if [[ "${CAN_INTERFACE}" == "slcan" ]]; then
   if [[ ! -e "${CAN_PORT}" ]]; then
     bashio::log.warning "Urzadzenie ${CAN_PORT} nie istnieje — sprawdz USB i opcje dodatku"
+    for dev in /dev/serial/by-id/*; do
+      if [[ -e "${dev}" ]]; then
+        bashio::log.info "Dostepne USB: ${dev}"
+      fi
+    done
   fi
 elif [[ "${CAN_INTERFACE}" == "gs_usb" ]]; then
   bashio::log.info "gs_usb channel ${GSUSB_CHANNEL} — port szeregowy nie jest uzywany"
