@@ -164,7 +164,7 @@ class BusManager:
                 "module_count": len(self._modules),
                 "last_scan_status": self._last_scan_status,
                 "last_scan_at": self._last_scan_at,
-                "version": "0.3.11",
+                "version": "0.3.12",
                 "mqtt_enabled": self._options.mqtt_enabled,
             }
 
@@ -264,6 +264,23 @@ class BusManager:
     def _end_exclusive_io(self) -> None:
         self._rx_enabled.set()
         self._scan_lock.release()
+
+    def _begin_command_io(self, *, blocking: bool = False, timeout: float = 3.0) -> bool:
+        """Blokada magistrali na krótkie polecenia (bez wyłączania wątku RX)."""
+        if blocking:
+            return self._scan_lock.acquire(blocking=True, timeout=timeout)
+        return self._scan_lock.acquire(blocking=False)
+
+    def _end_command_io(self) -> None:
+        self._scan_lock.release()
+
+    def _relay_cache_row(self, module_id: int, relay_no: int) -> dict[str, Any] | None:
+        detail = self.module_detail(int(module_id))
+        relays = (detail or {}).get("runtime", {}).get("relays") or []
+        for row in relays:
+            if int(row.get("relay_no", -1)) == int(relay_no):
+                return row
+        return None
 
     def _open_bus(self) -> None:
         import can
@@ -741,39 +758,31 @@ class BusManager:
             return {"ok": False, "error": "invalid state"}
         mid = int(module_id)
         rn = int(relay_no)
-        resp = self.send_config_and_wait(mid, COMMAND_SET_RELAY_STATE, [rn, code], timeout=0.6)
-        if resp is not None and len(resp) >= 5 and int(resp[2]) == 0:
-            self.store_relay_state(mid, rn, bool(int(resp[4])))
-        elif resp is not None and len(resp) >= 3 and int(resp[2]) != 0:
-            return {
-                "ok": False,
-                "error": f"status={int(resp[2])}",
-                "module_id": mid,
-                "relay_no": rn,
-            }
-        else:
-            deadline = time.time() + 0.6
-            while time.time() < deadline:
-                self.pump_rx(0.05)
-            detail = self.module_detail(mid)
-            relays = (detail or {}).get("runtime", {}).get("relays") or []
-            cached = next((r for r in relays if int(r.get("relay_no", -1)) == rn), None)
-            if cached is None:
-                return {"ok": False, "error": "no response", "module_id": mid, "relay_no": rn}
-        deadline = time.time() + 0.5
-        while time.time() < deadline:
-            self.pump_rx(0.05)
-        detail = self.module_detail(mid)
-        relays = (detail or {}).get("runtime", {}).get("relays") or []
-        row = next((r for r in relays if int(r.get("relay_no", -1)) == rn), None)
-        is_on = bool(row.get("on")) if row else None
-        return {
-            "ok": True,
-            "module_id": mid,
-            "relay_no": rn,
-            "state": state,
-            "on": is_on,
-        }
+        if not self._begin_command_io(blocking=True, timeout=3.0):
+            return {"ok": False, "error": "bus busy (scan/tab-load in progress)", "module_id": mid, "relay_no": rn}
+        try:
+            resp = self.send_config_and_wait(mid, COMMAND_SET_RELAY_STATE, [rn, code], timeout=0.35)
+            if resp is not None and len(resp) >= 5 and int(resp[2]) == 0:
+                is_on = bool(int(resp[4]))
+                self.store_relay_state(mid, rn, is_on)
+            elif resp is not None and len(resp) >= 3 and int(resp[2]) != 0:
+                return {
+                    "ok": False,
+                    "error": f"status={int(resp[2])}",
+                    "module_id": mid,
+                    "relay_no": rn,
+                }
+            else:
+                row = self._relay_cache_row(mid, rn)
+                if row is None:
+                    self.pump_rx(0.12)
+                    row = self._relay_cache_row(mid, rn)
+                if row is None:
+                    return {"ok": False, "error": "no response", "module_id": mid, "relay_no": rn}
+                is_on = bool(row.get("on"))
+            return {"ok": True, "module_id": mid, "relay_no": rn, "state": state, "on": is_on}
+        finally:
+            self._end_command_io()
 
     def set_shutter_command(
         self,
@@ -790,7 +799,7 @@ class BusManager:
         payload = [int(module_id), int(shutter_no), cmd, param_byte, 0, 0, 0, 0]
         ok = self.send_raw(CAN_ID_SHUTTER_CMD, payload)
         if ok:
-            deadline = time.time() + 2.0
+            deadline = time.time() + 0.45
             while time.time() < deadline:
                 self.pump_rx(0.05)
         return {"ok": ok, "module_id": module_id, "shutter_no": shutter_no, "command": command}

@@ -79,18 +79,23 @@ def _load_gpio_tab(bus: BusManager, module_id: int) -> dict[str, Any]:
     }
 
 
-def _sync_relay_pulses(bus: BusManager, module_id: int) -> None:
+def _sync_relay_pulses(bus: BusManager, module_id: int, *, only_missing: bool = True) -> None:
+    detail = bus.module_detail(module_id) or {}
+    known = {int(k) for k in ((detail.get("runtime") or {}).get("relay_pulse_ms") or {})}
     for relay_no in sorted(bus.relay_numbers_for_module(module_id)):
+        if only_missing and int(relay_no) in known:
+            continue
         read_relay_pulse_ms(bus, module_id, int(relay_no))
-        time.sleep(0.04)
+        time.sleep(0.02)
 
 
 def _load_control_tab(bus: BusManager, module_id: int) -> dict[str, Any]:
     steps: list[dict[str, Any]] = []
     steps.append(_step("Podsumowanie modulu", lambda: _ensure_summary(bus, module_id)))
 
-    detail = bus.module_detail(module_id)
-    roles = (detail or {}).get("runtime", {}).get("gpio_roles") or {}
+    detail = bus.module_detail(module_id) or {}
+    rt = detail.get("runtime") or {}
+    roles = rt.get("gpio_roles") or {}
     if not roles:
         def _roles() -> None:
             result = read_gpio_roles(bus, module_id)
@@ -99,13 +104,23 @@ def _load_control_tab(bus: BusManager, module_id: int) -> dict[str, Any]:
 
         steps.append(_step("Role GPIO", _roles))
 
-    steps.append(_step("Impulsy przekaznikow", lambda: _sync_relay_pulses(bus, module_id)))
+    pulse_map = rt.get("relay_pulse_ms") or {}
+    relay_nums = bus.relay_numbers_for_module(module_id)
+    known_pulse = {int(k) for k in pulse_map}
+    missing_pulse = [rn for rn in relay_nums if int(rn) not in known_pulse]
+    if missing_pulse:
+        steps.append(
+            _step(
+                "Impulsy przekaznikow",
+                lambda: _sync_relay_pulses(bus, module_id, only_missing=True),
+            )
+        )
 
     def _values() -> None:
         read_gpio_values(bus, module_id)
 
     steps.append(_step("Stany wyjsc", _values))
-    deadline = time.time() + 1.5
+    deadline = time.time() + 0.45
     while time.time() < deadline:
         bus.pump_rx(0.05)
     return {"ok": True, "tab": "control", "steps": steps}
@@ -165,7 +180,7 @@ def load_module_tab(bus: BusManager, module_id: int, tab: str) -> dict[str, Any]
     if not (1 <= mid <= 254):
         return {"ok": False, "error": "invalid module_id"}
 
-    if not bus._begin_exclusive_io():  # noqa: SLF001
+    if not bus._begin_command_io():  # noqa: SLF001
         return {"ok": False, "error": "bus busy (scan/refresh in progress)"}
     try:
         if tab_key == "modules":
@@ -182,4 +197,4 @@ def load_module_tab(bus: BusManager, module_id: int, tab: str) -> dict[str, Any]
             return _load_sensors_tab(bus, mid)
         return {"ok": False, "error": "unsupported tab"}
     finally:
-        bus._end_exclusive_io()  # noqa: SLF001
+        bus._end_command_io()  # noqa: SLF001
