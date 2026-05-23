@@ -13,6 +13,8 @@ COPY lib /lib
 COPY can_service /opt/can_service
 COPY static /opt/can_service/static
 
+RUN PYTHONPATH=/lib python3 -c "from protocol_constants import CAN_ID_RELAY_GPIO_MAP, MCP23017_RELAY_CAN_BASE; print('protocol ok', CAN_ID_RELAY_GPIO_MAP)"
+
 WORKDIR /opt
 
 CMD [ "/run.sh" ]
