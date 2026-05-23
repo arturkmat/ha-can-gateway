@@ -19,7 +19,7 @@ from .gpio_service import (
     read_relay_pulse_ms,
 )
 from .mqtt_bridge import MqttBridge
-from .options import load_options
+from .tab_load_service import load_module_tab
 
 _LOGGER = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -74,6 +74,22 @@ def create_app(bus: BusManager) -> web.Application:
         except (KeyError, ValueError):
             return _json_error("invalid module_id")
         result = await asyncio.to_thread(bus.reboot_module, mid)
+        status = 200 if result.get("ok") else 503
+        return web.json_response(result, status=status)
+
+    async def api_module_tab_load(request: web.Request) -> web.Response:
+        try:
+            mid = int(request.match_info["module_id"])
+        except (KeyError, ValueError):
+            return _json_error("invalid module_id")
+        body = {}
+        if request.can_read_body:
+            try:
+                body = await request.json()
+            except Exception:  # noqa: BLE001
+                body = {}
+        tab = str(body.get("tab", "modules"))
+        result = await asyncio.to_thread(load_module_tab, bus, mid, tab)
         status = 200 if result.get("ok") else 503
         return web.json_response(result, status=status)
 
@@ -224,6 +240,7 @@ def create_app(bus: BusManager) -> web.Application:
     app.router.add_get("/api/modules", api_modules)
     app.router.add_get("/api/modules/{module_id}", api_module_detail)
     app.router.add_post("/api/scan", api_scan)
+    app.router.add_post("/api/modules/{module_id}/tab-load", api_module_tab_load)
     app.router.add_post("/api/modules/{module_id}/refresh", api_module_refresh)
     app.router.add_post("/api/modules/{module_id}/reboot", api_module_reboot)
     app.router.add_post("/api/modules/{module_id}/relays/{relay_no}", api_relay_set)

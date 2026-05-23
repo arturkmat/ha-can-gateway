@@ -19,6 +19,7 @@ from protocol_constants import (
     CAN_ID_SHUTTER_CMD,
     CAN_ID_SHUTTER_STATUS,
     COMMAND_GET_BUILD_INFO,
+    COMMAND_GET_BUTTON_TIMING,
     COMMAND_GET_MCP23017_ROLE_DUMP,
     COMMAND_GET_MODULE_NAME,
     COMMAND_GET_RELAY_PULSE,
@@ -163,7 +164,7 @@ class BusManager:
                 "module_count": len(self._modules),
                 "last_scan_status": self._last_scan_status,
                 "last_scan_at": self._last_scan_at,
-                "version": "0.3.8",
+                "version": "0.3.9",
                 "mqtt_enabled": self._options.mqtt_enabled,
             }
 
@@ -519,6 +520,11 @@ class BusManager:
             rec.runtime.relay_pulse_ms[rn] = pulse
             st = rec.runtime.relays.setdefault(rn, RelayState(relay_no=rn))
             st.pulse_ms = pulse
+        elif cmd == COMMAND_GET_BUTTON_TIMING and len(data) >= 5:
+            rec.runtime.button_timing = {
+                "multiclick_ms": int(data[3]) * 10,
+                "longpress_ms": int(data[4]) * 10,
+            }
         self._notify()
 
     def send_config_and_wait(
@@ -596,6 +602,33 @@ class BusManager:
             rec.runtime.relay_pulse_ms[int(relay_no)] = int(pulse_ms)
             st = rec.runtime.relays.setdefault(int(relay_no), RelayState(relay_no=int(relay_no)))
             st.pulse_ms = int(pulse_ms)
+            self._notify()
+
+    def store_button_timing(self, module_id: int, multiclick_ms: int, longpress_ms: int) -> None:
+        with self._lock:
+            rec = self._modules.get(int(module_id))
+            if rec is None:
+                return
+            rec.runtime.button_timing = {
+                "multiclick_ms": int(multiclick_ms),
+                "longpress_ms": int(longpress_ms),
+            }
+            self._notify()
+
+    def store_mappings(self, module_id: int, rows: list[dict[str, Any]]) -> None:
+        with self._lock:
+            rec = self._modules.get(int(module_id))
+            if rec is None:
+                return
+            rec.runtime.mappings = list(rows)
+            self._notify()
+
+    def clear_sensors(self, module_id: int) -> None:
+        with self._lock:
+            rec = self._modules.get(int(module_id))
+            if rec is None:
+                return
+            rec.runtime.sensors.clear()
             self._notify()
 
     @staticmethod

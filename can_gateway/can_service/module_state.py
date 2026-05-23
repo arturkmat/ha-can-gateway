@@ -51,6 +51,8 @@ class ModuleRuntimeState:
     relay_pulse_ms: dict[int, int] = field(default_factory=dict)
     mcp_relay_pins: dict[int, set[int]] = field(default_factory=dict)
     relay_gpio_map: dict[int, int] = field(default_factory=dict)
+    button_timing: dict[str, int] = field(default_factory=dict)
+    mappings: list[dict[str, Any]] = field(default_factory=list)
     sensors: list[dict[str, Any]] = field(default_factory=list)
     hw_flags: int = 0
     gpio_roles: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -70,6 +72,8 @@ class ModuleRuntimeState:
             "relay_gpio_map": {str(k): v for k, v in self.relay_gpio_map.items()},
             "relay_pulse_ms": {str(k): v for k, v in self.relay_pulse_ms.items()},
             "mcp_relay_pins": {str(k): sorted(v) for k, v in self.mcp_relay_pins.items()},
+            "button_timing": dict(self.button_timing),
+            "mappings": list(self.mappings),
             "hw_flags": self.hw_flags,
             "sensors": list(self.sensors),
             "gpio_roles": dict(self.gpio_roles),

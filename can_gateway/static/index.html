@@ -6,8 +6,9 @@
   <title>CAN Gateway</title>
   <style>
     :root { font-family: system-ui, sans-serif; color: #e8e8e8; background: #121212; }
-    body { max-width: 1200px; margin: 0 auto; padding: 1rem 1.25rem 2rem; }
+    body { max-width: 1240px; margin: 0 auto; padding: 1rem 1.25rem 2rem; }
     h1 { font-size: 1.35rem; margin: 0 0 0.25rem; }
+    h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
     .sub { color: #9aa0a6; font-size: 0.9rem; margin-bottom: 1rem; }
     .tabs { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
     .tabs button { background: #333; color: #ddd; border: 1px solid #444; padding: 0.4rem 0.85rem; border-radius: 6px; cursor: pointer; }
@@ -30,68 +31,59 @@
     @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
     .pill { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 999px; background: #333; font-size: 0.75rem; margin-right: 0.25rem; }
     .relay-btn { margin: 0.15rem; padding: 0.25rem 0.5rem; font-size: 0.8rem; }
-    pre { background: #0d0d0d; padding: 0.75rem; border-radius: 6px; overflow: auto; font-size: 0.75rem; max-height: 220px; }
+    pre { background: #0d0d0d; padding: 0.75rem; border-radius: 6px; overflow: auto; font-size: 0.75rem; max-height: 320px; white-space: pre-wrap; }
     .hint { font-size: 0.82rem; color: #9aa0a6; margin: 0.5rem 0; }
     input[type=number] { width: 5rem; padding: 0.3rem; border-radius: 4px; border: 1px solid #444; background: #111; color: #eee; }
     select { padding: 0.3rem; border-radius: 4px; border: 1px solid #444; background: #111; color: #eee; }
+    #tab-load-line { min-height: 1.2rem; font-size: 0.85rem; color: #9aa0a6; }
   </style>
 </head>
 <body>
   <h1>CAN Gateway</h1>
-  <p class="sub">Dodatek HA v0.3 — magistrala CAN, panel jak konfigurator Windows (skan, GPIO, sterowanie, OTA info).</p>
+  <p class="sub">Panel jak konfigurator Windows — lazy-load zakładek po wyborze modułu (F5 = skan).</p>
 
   <div class="card">
     <div id="status-line">Ładowanie…</div>
+    <div id="tab-load-line"></div>
     <div class="row">
       <button id="btn-scan" type="button">Skan F5</button>
       <button id="btn-refresh" type="button" class="secondary">Odśwież stan</button>
+      <button id="btn-reload-tab" type="button" class="secondary" disabled>Przeładuj zakładkę</button>
       <span class="sub">Moduł: <strong id="sel-id">—</strong></span>
     </div>
   </div>
 
   <div class="tabs">
-    <button type="button" class="tab active" data-tab="modules">Moduły</button>
-    <button type="button" class="tab" data-tab="control">Sterowanie</button>
+    <button type="button" class="tab active" data-tab="modules">Moduły CAN</button>
     <button type="button" class="tab" data-tab="gpio">GPIO / Pinout</button>
-    <button type="button" class="tab" data-tab="ota">OTA</button>
-    <button type="button" class="tab" data-tab="debug">Diagnostyka</button>
+    <button type="button" class="tab" data-tab="control">Sterowanie</button>
+    <button type="button" class="tab" data-tab="shutters">Rolety</button>
+    <button type="button" class="tab" data-tab="mapping">Mapowanie</button>
+    <button type="button" class="tab" data-tab="sensors">Sensory</button>
+    <button type="button" class="tab" data-tab="logs">Logi</button>
   </div>
 
   <div id="panel-modules" class="panel active">
     <div class="card">
       <table>
-        <thead><tr><th>ID</th><th>Nazwa</th><th>HW</th><th>MAC</th><th>Szczegóły</th></tr></thead>
+        <thead><tr><th>ID</th><th>Nazwa</th><th>HW</th><th>MAC</th><th>Przyciski/Relays/Rolety</th></tr></thead>
         <tbody id="modules-body"></tbody>
       </table>
       <div class="row" style="margin-top:0.75rem">
-        <button id="btn-deep" type="button" class="secondary" disabled>Głęboki odczyt modułu</button>
         <button id="btn-reboot" type="button" class="danger" disabled>Restart modułu</button>
+        <button id="btn-ota-read" type="button" class="secondary" disabled>OTA info</button>
       </div>
-    </div>
-  </div>
-
-  <div id="panel-control" class="panel">
-    <div class="grid2">
-      <div class="card">
-        <h2 style="margin:0 0 0.5rem;font-size:1.05rem;">Przekaźniki</h2>
-        <p class="hint">Impuls czasowy = pulse_ms w module + ON (jak konfigurator). Wyjścia rolet są zablokowane w firmware.</p>
-        <div id="relays-box"></div>
-      </div>
-      <div class="card">
-        <h2 style="margin:0 0 0.5rem;font-size:1.05rem;">Rolety</h2>
-        <div id="shutters-box"></div>
-      </div>
+      <pre id="ota-box" style="margin-top:0.5rem;display:none"></pre>
     </div>
   </div>
 
   <div id="panel-gpio" class="panel">
     <div class="card">
+      <p id="pinout-hint" class="hint">Wybierz moduł — zakładka załaduje role GPIO i czasy przycisków (jak konfigurator).</p>
+      <p id="button-timing" class="hint"></p>
       <div class="row">
-        <button id="btn-gpio-read" type="button" class="secondary" disabled>Odczytaj role GPIO</button>
-        <button id="btn-gpio-values" type="button" class="secondary" disabled>Stany pinów</button>
-        <button id="btn-gpio-clear" type="button" class="danger" disabled>Wyczyść mapowanie</button>
+        <button id="btn-gpio-clear" type="button" class="danger" disabled>Wyczyść mapowanie GPIO</button>
       </div>
-      <p id="pinout-hint" class="hint">Wybierz moduł z listy.</p>
       <table>
         <thead><tr><th>GPIO</th><th>Rola</th><th>Index</th><th>Stan</th><th>Przypisz</th></tr></thead>
         <tbody id="gpio-body"></tbody>
@@ -99,29 +91,70 @@
     </div>
   </div>
 
-  <div id="panel-ota" class="panel">
+  <div id="panel-control" class="panel">
     <div class="card">
-      <p class="hint">Pełne wgrywanie firmware CAN-OTA wymaga konfiguratora Windows. Tutaj: odczyt stanu OTA modułu.</p>
-      <button id="btn-ota-read" type="button" class="secondary" disabled>Odczytaj OTA info</button>
-      <pre id="ota-box">—</pre>
+      <h2>Przekaźniki</h2>
+      <p class="hint">Zakładka ładuje listę wyjść, impulsy i stany (GET_SUMMARY + GPIO + pulse). Wyjścia rolet są zablokowane.</p>
+      <div id="relays-box"></div>
     </div>
   </div>
 
-  <div id="panel-debug" class="panel">
+  <div id="panel-shutters" class="panel">
     <div class="card">
-      <pre id="raw-state">{}</pre>
+      <h2>Rolety</h2>
+      <p class="hint">Odczyt par przekaźników rolet (GET_SHUTTER_RELAYS) — jak zakładka Rolety w konfiguratorze.</p>
+      <table>
+        <thead><tr><th>Roleta</th><th>Open relay</th><th>Close relay</th><th>Pozycja</th><th>Sterowanie</th></tr></thead>
+        <tbody id="shutters-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="panel-mapping" class="panel">
+    <div class="card">
+      <h2>Mapowanie przycisków / tras</h2>
+      <p class="hint">Odczyt bindingów lokalnych i z innych modułów (GET_BINDING*, relay/shutter/sensor routes).</p>
+      <table>
+        <thead><tr><th>Przycisk/źródło</th><th>Akcja</th><th>Odbiorca</th><th>ID modułu</th><th>Typ</th><th>Cel</th><th>Stan</th></tr></thead>
+        <tbody id="mapping-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="panel-sensors" class="panel">
+    <div class="card">
+      <h2>Sensory</h2>
+      <p class="hint">Skan sensorów (CMD 40) — dane na żywo po załadowaniu zakładki.</p>
+      <table>
+        <thead><tr><th>#</th><th>Typ</th><th>Dane (hex)</th></tr></thead>
+        <tbody id="sensors-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="panel-logs" class="panel">
+    <div class="card">
+      <div class="row">
+        <button id="btn-clear-log" type="button" class="secondary">Wyczyść log</button>
+      </div>
+      <pre id="log-box"></pre>
     </div>
   </div>
 
 <script>
 const ROLES = ["Unused","Button","Relay","DS18B20","BinarySensor","I2C_SDA","I2C_SCL","HC595","SHUTTER_UP","SHUTTER_DOWN","MCP23017","NTC"];
+const SENSOR_TYPES = {1:"DS18B20",2:"I2C",3:"SHT30",4:"BME280",5:"NTC",6:"Binary"};
 let selectedId = null;
 let modulesCache = [];
 let pinoutCache = null;
+let currentTab = "modules";
+let tabLoadTimer = null;
+let tabLoading = false;
+let mappingsCache = [];
+let sensorsCache = [];
 
 function apiUrl(path) {
-  const clean = String(path).replace(/^\//, "");
-  return new URL(clean, window.location.href).toString();
+  return new URL(String(path).replace(/^\//, ""), window.location.href).toString();
 }
 
 async function api(path, opts) {
@@ -130,9 +163,18 @@ async function api(path, opts) {
   return { res, data };
 }
 
+function appendLog(msg) {
+  const box = document.getElementById("log-box");
+  const ts = new Date().toLocaleTimeString("pl-PL", { hour12: false });
+  box.textContent += `[${ts}] ${msg}\n`;
+  box.scrollTop = box.scrollHeight;
+}
+
 function setTab(name) {
+  currentTab = name;
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === "panel-" + name));
+  scheduleTabLoad();
 }
 
 document.querySelectorAll(".tab").forEach(btn => {
@@ -143,37 +185,78 @@ function moduleById(id) {
   return modulesCache.find(x => x.module_id === id);
 }
 
-async function loadAll() {
+function setTabLoading(on, text) {
+  tabLoading = on;
+  document.getElementById("tab-load-line").innerHTML = on
+    ? `<span class="warn">${text || "Ładowanie zakładki…"}</span>`
+    : "";
+  document.getElementById("btn-reload-tab").disabled = on || selectedId == null;
+}
+
+async function loadCurrentTab(force) {
+  if (selectedId == null || currentTab === "logs") return;
+  if (tabLoading && !force) return;
+  setTabLoading(true, `[tab-load] ID=${selectedId} · ${currentTab}`);
+  appendLog(`[tab-load] ID=${selectedId}, zakladka=${currentTab}...`);
+  const { res, data } = await api(`/api/modules/${selectedId}/tab-load`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tab: currentTab }),
+  });
+  for (const step of (data.steps || [])) {
+    const mark = step.ok ? "OK" : "ERR";
+    appendLog(`  ${step.name}: ${mark}${step.error ? " — " + step.error : ""}`);
+  }
+  if (!res.ok) appendLog(`  blad: ${data.error || res.status}`);
+  else appendLog(`[tab-load] zakonczono zakladke ID=${selectedId}.`);
+  if (data.mappings) mappingsCache = data.mappings;
+  if (data.sensors) sensorsCache = data.sensors;
+  await loadAll(false);
+  renderActivePanel();
+  setTabLoading(false);
+}
+
+function scheduleTabLoad() {
+  if (tabLoadTimer) clearTimeout(tabLoadTimer);
+  tabLoadTimer = setTimeout(() => loadCurrentTab(false), 80);
+}
+
+async function loadAll(refreshTab) {
   const { res, data } = await api("/api/state");
-  document.getElementById("raw-state").textContent = JSON.stringify(data, null, 2);
   if (!res.ok) {
-    document.getElementById("status-line").innerHTML =
-      `<span class="err">API ${res.status}</span> · sprawdz logi dodatku`;
+    document.getElementById("status-line").innerHTML = `<span class="err">API ${res.status}</span>`;
     return;
   }
   const st = data.status || {};
-  const bus = st.bus_ok ? '<span class="ok">magistrala OK</span>' : '<span class="err">OFF</span>';
-  const mqtt = st.mqtt_enabled ? " · MQTT" : "";
-  const iface = st.can_interface || "?";
-  const port = st.can_port || (st.gsusb_channel != null ? `gs_usb:${st.gsusb_channel}` : "?");
-  const bitrate = st.can_bitrate != null ? `${st.can_bitrate} bps` : "?";
-  const mods = st.module_count != null ? st.module_count : 0;
-  const err = st.bus_error ? ` · <span class="warn" title="${st.bus_error}">blad magistrali</span>` : "";
+  const bus = st.bus_ok ? '<span class="ok">magistrala OK</span>' : `<span class="err">OFF</span>`;
+  const port = st.can_port || st.configured_port || "?";
+  const err = st.bus_error ? ` · <span class="warn" title="${st.bus_error}">blad USB/CAN</span>` : "";
   document.getElementById("status-line").innerHTML =
-    `${bus}${err} · ${iface} · ${port} · ${bitrate} · moduly: ${mods}${mqtt}`;
+    `${bus}${err} · ${st.can_interface || "?"} · ${port} · ${st.can_bitrate || "?"} bps · moduly: ${st.module_count ?? 0}`;
   modulesCache = data.modules || [];
   renderModules();
   if (selectedId != null) {
-    renderControl(selectedId);
-    if (pinoutCache && pinoutCache.module_id === selectedId) renderGpioTable();
+    const m = moduleById(selectedId);
+    if (m?.runtime?.mappings?.length) mappingsCache = m.runtime.mappings;
+    if (m?.runtime?.sensors?.length) sensorsCache = m.runtime.sensors;
   }
   updateButtons();
+  if (refreshTab !== false) renderActivePanel();
+}
+
+function renderActivePanel() {
+  if (selectedId == null) return;
+  if (currentTab === "control") renderControl(selectedId);
+  if (currentTab === "gpio") renderGpioTab(selectedId);
+  if (currentTab === "shutters") renderShutters(selectedId);
+  if (currentTab === "mapping") renderMappings(mappingsCache);
+  if (currentTab === "sensors") renderSensors(sensorsCache);
 }
 
 function updateButtons() {
   const has = selectedId != null;
-  ["btn-deep","btn-reboot","btn-gpio-read","btn-gpio-values","btn-gpio-clear","btn-ota-read"].forEach(id => {
-    document.getElementById(id).disabled = !has;
+  ["btn-reboot","btn-ota-read","btn-gpio-clear","btn-reload-tab"].forEach(id => {
+    document.getElementById(id).disabled = !has || tabLoading;
   });
 }
 
@@ -183,7 +266,8 @@ function renderModules() {
   for (const m of modulesCache) {
     const tr = document.createElement("tr");
     tr.className = selectedId === m.module_id ? "selected" : "";
-    tr.innerHTML = `<td>${m.module_id}</td><td>${m.name || "-"}</td><td>${m.hw_name || m.hw_type}</td><td>${m.mac || "-"}</td><td>${m.summary_details || ""}</td>`;
+    const sum = m.summary_details || `B=${m.button_count ?? "?"} R=${m.relay_count ?? "?"} S=${m.shutter_count ?? "?"}`;
+    tr.innerHTML = `<td>${m.module_id}</td><td>${m.name || "-"}</td><td>${m.hw_name || m.hw_type}</td><td>${m.mac || "-"}</td><td>${sum}</td>`;
     tr.onclick = () => selectModule(m.module_id);
     tb.appendChild(tr);
   }
@@ -192,19 +276,18 @@ function renderModules() {
 async function selectModule(id) {
   selectedId = id;
   pinoutCache = null;
+  mappingsCache = [];
+  sensorsCache = [];
   document.getElementById("sel-id").textContent = id;
+  document.getElementById("ota-box").style.display = "none";
   renderModules();
-  renderControl(id);
   updateButtons();
-  const { data } = await api(`/api/modules/${id}/pinout`);
-  pinoutCache = data;
-  renderGpioTable();
+  scheduleTabLoad();
 }
 
 function shutterRelaySet(m) {
-  const rt = m.runtime || {};
   const reserved = new Set();
-  for (const pair of Object.values(rt.shutter_map || {})) {
+  for (const pair of Object.values((m.runtime || {}).shutter_map || {})) {
     if (Array.isArray(pair)) { reserved.add(pair[0]); reserved.add(pair[1]); }
   }
   return reserved;
@@ -215,142 +298,183 @@ function renderControl(id) {
   if (!m) return;
   const rt = m.runtime || {};
   const relays = rt.relays || [];
-  const shutters = rt.shutters || [];
   const reserved = shutterRelaySet(m);
   const rb = document.getElementById("relays-box");
-  rb.innerHTML = relays.length ? "" : "<span class='sub'>Brak danych — «Głęboki odczyt» na zakładce Moduły</span>";
+  if (!relays.length) {
+    rb.innerHTML = "<span class='sub'>Brak danych — przeładuj zakładkę Sterowanie</span>";
+    return;
+  }
+  rb.innerHTML = "";
   for (const r of relays) {
-    const blocked = reserved.has(r.relay_no);
+    if (reserved.has(r.relay_no)) continue;
     const wrap = document.createElement("div");
     wrap.style.marginBottom = "0.55rem";
-    wrap.innerHTML = `<span class="pill">R${r.relay_no}</span> ${r.on ? "ON" : "OFF"} pulse=${r.pulse_ms || 0}ms ${blocked ? '<span class="warn">[roleta]</span>' : ""}<br>`;
-    if (!blocked) {
-      ["on","off","toggle"].forEach(st => {
-        const b = document.createElement("button");
-        b.textContent = st.toUpperCase(); b.className = "relay-btn secondary";
-        b.onclick = () => setRelay(id, r.relay_no, st);
-        wrap.appendChild(b);
-      });
-      const inp = document.createElement("input");
-      inp.type = "number"; inp.min = 0; inp.max = 65535; inp.value = r.pulse_ms || 0;
-      const save = document.createElement("button");
-      save.textContent = "Zapisz impuls ms"; save.className = "relay-btn secondary";
-      save.onclick = () => setPulse(id, r.relay_no, inp.value);
-      wrap.appendChild(inp); wrap.appendChild(save);
-    }
+    wrap.innerHTML = `<span class="pill">R${r.relay_no}</span> ${r.on ? "ON" : "OFF"} pulse=${r.pulse_ms || 0}ms<br>`;
+    ["on","off","toggle"].forEach(st => {
+      const b = document.createElement("button");
+      b.textContent = st.toUpperCase(); b.className = "relay-btn secondary";
+      b.onclick = () => setRelay(id, r.relay_no, st);
+      wrap.appendChild(b);
+    });
+    const inp = document.createElement("input");
+    inp.type = "number"; inp.min = 0; inp.max = 65535; inp.value = r.pulse_ms || 0;
+    const save = document.createElement("button");
+    save.textContent = "Zapisz impuls ms"; save.className = "relay-btn secondary";
+    save.onclick = () => setPulse(id, r.relay_no, inp.value);
+    wrap.appendChild(inp); wrap.appendChild(save);
     rb.appendChild(wrap);
   }
-  const sb = document.getElementById("shutters-box");
-  sb.innerHTML = shutters.length ? "" : "<span class='sub'>Brak rolet</span>";
-  for (const s of shutters) {
-    const row = document.createElement("div");
-    row.style.marginBottom = "0.4rem";
-    row.innerHTML = `<strong>S${s.shutter_no}</strong> pos=${s.position ?? "?"} ${s.direction_text || ""} `;
+}
+
+function renderShutters(id) {
+  const m = moduleById(id);
+  const tb = document.getElementById("shutters-body");
+  tb.innerHTML = "";
+  if (!m) return;
+  const rt = m.runtime || {};
+  const map = rt.shutter_map || {};
+  const status = {};
+  for (const s of (rt.shutters || [])) status[s.shutter_no] = s;
+  const nums = new Set([...Object.keys(map).map(Number), ...Object.keys(status).map(Number)]);
+  if (!nums.size) {
+    tb.innerHTML = "<tr><td colspan='5' class='sub'>Brak skonfigurowanych rolet — przeładuj zakładkę</td></tr>";
+    return;
+  }
+  for (const sid of [...nums].sort((a,b) => a-b)) {
+    const pair = map[String(sid)] || map[sid] || [0,0];
+    const st = status[sid] || {};
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>S${sid}</td><td>${pair[0]||"-"}</td><td>${pair[1]||"-"}</td><td>${st.position ?? "?"}% ${st.direction_text || ""}</td><td class="sh-cmd"></td>`;
+    const cell = tr.querySelector(".sh-cmd");
     ["open","stop","close"].forEach(cmd => {
       const b = document.createElement("button");
       b.textContent = cmd; b.className = "relay-btn secondary";
-      b.onclick = () => setShutter(id, s.shutter_no, cmd);
-      row.appendChild(b);
+      b.onclick = () => setShutter(id, sid, cmd);
+      cell.appendChild(b);
     });
-    sb.appendChild(row);
+    tb.appendChild(tr);
   }
+}
+
+function renderMappings(rows) {
+  const tb = document.getElementById("mapping-body");
+  tb.innerHTML = "";
+  if (!rows?.length) {
+    tb.innerHTML = "<tr><td colspan='7' class='sub'>Brak mapowań — przeładuj zakładkę</td></tr>";
+    return;
+  }
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${r.button}</td><td>${r.action}</td><td>${r.receiver}</td><td>${r.target_id}</td><td>${r.target_type}</td><td>${r.target}</td><td>${r.state}</td>`;
+    tb.appendChild(tr);
+  }
+}
+
+function renderSensors(rows) {
+  const tb = document.getElementById("sensors-body");
+  tb.innerHTML = "";
+  if (!rows?.length) {
+    tb.innerHTML = "<tr><td colspan='3' class='sub'>Brak danych — przeładuj zakładkę Sensory</td></tr>";
+    return;
+  }
+  rows.forEach((s, i) => {
+    const tr = document.createElement("tr");
+    const hex = (s.data || []).map(b => (b&0xff).toString(16).padStart(2,"0")).join(" ");
+    tr.innerHTML = `<td>${s.sensor_no ?? i+1}</td><td>${SENSOR_TYPES[s.sensor_type] || s.sensor_type}</td><td>${hex || "-"}</td>`;
+    tb.appendChild(tr);
+  });
+}
+
+async function renderGpioTab(id) {
+  const { data } = await api(`/api/modules/${id}/pinout`);
+  pinoutCache = data;
+  renderGpioTable();
+  const m = moduleById(id);
+  const bt = (m?.runtime?.button_timing) || {};
+  document.getElementById("button-timing").textContent = bt.multiclick_ms != null
+    ? `MultiClick=${bt.multiclick_ms} ms · LongPress=${bt.longpress_ms} ms`
+    : "";
 }
 
 function renderGpioTable() {
   const tb = document.getElementById("gpio-body");
   const hint = document.getElementById("pinout-hint");
   tb.innerHTML = "";
-  if (!pinoutCache || !pinoutCache.ok) {
-    hint.textContent = pinoutCache?.error || "Brak profilu pinout dla tego HW.";
+  if (!pinoutCache?.ok) {
+    hint.textContent = pinoutCache?.error || "Brak profilu pinout.";
     return;
   }
-  hint.textContent = `Pinout: ${pinoutCache.pinout_name} · ${(pinoutCache.gpios || []).length} pinów`;
+  hint.textContent = `Pinout: ${pinoutCache.pinout_name} · ${(pinoutCache.gpios||[]).length} pinów`;
   for (const row of pinoutCache.gpios || []) {
     const tr = document.createElement("tr");
     if (row.reserved) tr.className = "reserved";
-    const state = (row.logical != null) ? `${row.logical}/${row.raw}` : "—";
+    const state = row.logical != null ? `${row.logical}/${row.raw}` : "—";
     tr.innerHTML = `<td>GPIO${row.gpio}</td><td>${row.role_name || "Unused"}</td><td>${row.index ?? 0}</td><td>${state}</td><td class="gpio-assign"></td>`;
     const cell = tr.querySelector(".gpio-assign");
     if (!row.reserved) {
       const sel = document.createElement("select");
-      ROLES.forEach(r => { const o = document.createElement("option"); o.value = r; o.textContent = r; if (r === (row.role_name || "Unused")) o.selected = true; sel.appendChild(o); });
+      ROLES.forEach(r => { const o = document.createElement("option"); o.value = r; o.textContent = r; if (r === (row.role_name||"Unused")) o.selected = true; sel.appendChild(o); });
       const idx = document.createElement("input"); idx.type = "number"; idx.min = 0; idx.max = 255; idx.value = row.index || 0;
       const btn = document.createElement("button"); btn.textContent = "OK"; btn.className = "relay-btn";
       btn.onclick = () => assignGpio(row.gpio, sel.value, idx.value);
       cell.appendChild(sel); cell.appendChild(idx); cell.appendChild(btn);
-    } else {
-      cell.textContent = "zarezerwowany";
-    }
-    if (row.strapping_note) tr.title = row.strapping_note;
+    } else cell.textContent = "zarezerwowany";
     tb.appendChild(tr);
   }
 }
 
 async function setRelay(mid, relayNo, state) {
   await api(`/api/modules/${mid}/relays/${relayNo}`, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ state }) });
-  await loadAll();
+  await loadAll(false); renderControl(mid);
 }
 async function setPulse(mid, relayNo, pulse_ms) {
   await api(`/api/modules/${mid}/relays/${relayNo}/pulse`, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ pulse_ms: Number(pulse_ms) }) });
-  await loadAll();
+  await loadCurrentTab(true);
 }
 async function setShutter(mid, shutterNo, command) {
   await api(`/api/modules/${mid}/shutters/${shutterNo}`, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ command, param: 0 }) });
-  await loadAll();
+  await loadAll(false); renderShutters(mid);
 }
 async function assignGpio(gpio, role, index) {
   if (selectedId == null) return;
   await api(`/api/modules/${selectedId}/gpio/${gpio}`, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ role, index: Number(index), flags: 0 }) });
-  await api(`/api/modules/${selectedId}/pinout`).then(({data}) => { pinoutCache = data; renderGpioTable(); });
-  await loadAll();
+  await renderGpioTab(selectedId);
 }
 
-document.getElementById("btn-refresh").onclick = loadAll;
+document.getElementById("btn-refresh").onclick = () => loadAll(true);
+document.getElementById("btn-reload-tab").onclick = () => loadCurrentTab(true);
 document.getElementById("btn-scan").onclick = async () => {
   document.getElementById("btn-scan").disabled = true;
+  appendLog("Skan F5...");
   await api("/api/scan", { method: "POST" });
-  await loadAll();
+  await loadAll(true);
   document.getElementById("btn-scan").disabled = false;
-};
-document.getElementById("btn-deep").onclick = async () => {
-  if (selectedId == null) return;
-  document.getElementById("btn-deep").disabled = true;
-  await api(`/api/modules/${selectedId}/refresh`, { method: "POST" });
-  await loadAll();
-  document.getElementById("btn-deep").disabled = false;
 };
 document.getElementById("btn-reboot").onclick = async () => {
   if (selectedId == null || !confirm(`Restart modułu ID=${selectedId}?`)) return;
   await api(`/api/modules/${selectedId}/reboot`, { method: "POST" });
-};
-document.getElementById("btn-gpio-read").onclick = async () => {
-  if (selectedId == null) return;
-  await api(`/api/modules/${selectedId}/gpio/read`, { method: "POST" });
-  const { data } = await api(`/api/modules/${selectedId}/pinout`);
-  pinoutCache = data; renderGpioTable();
-};
-document.getElementById("btn-gpio-values").onclick = async () => {
-  if (selectedId == null) return;
-  await api(`/api/modules/${selectedId}/gpio/values`, { method: "POST" });
-  const { data } = await api(`/api/modules/${selectedId}/pinout`);
-  pinoutCache = data; renderGpioTable();
+  appendLog(`Restart modulu ${selectedId} wyslany.`);
 };
 document.getElementById("btn-gpio-clear").onclick = async () => {
   if (selectedId == null || !confirm("Wyczyścić wszystkie role GPIO modułu?")) return;
   await api(`/api/modules/${selectedId}/gpio/clear`, { method: "POST" });
-  const { data } = await api(`/api/modules/${selectedId}/pinout`);
-  pinoutCache = data; renderGpioTable();
+  await loadCurrentTab(true);
 };
 document.getElementById("btn-ota-read").onclick = async () => {
   if (selectedId == null) return;
   const { data } = await api(`/api/modules/${selectedId}/ota`);
-  document.getElementById("ota-box").textContent = JSON.stringify(data, null, 2);
+  const box = document.getElementById("ota-box");
+  box.style.display = "block";
+  box.textContent = JSON.stringify(data, null, 2);
 };
+document.getElementById("btn-clear-log").onclick = () => { document.getElementById("log-box").textContent = ""; };
 
-document.addEventListener("keydown", e => { if (e.key === "F5") { e.preventDefault(); document.getElementById("btn-scan").click(); } });
+document.addEventListener("keydown", e => {
+  if (e.key === "F5") { e.preventDefault(); document.getElementById("btn-scan").click(); }
+});
 
-loadAll();
-setInterval(loadAll, 8000);
+loadAll(false);
+setInterval(() => loadAll(false), 12000);
 </script>
 </body>
 </html>
