@@ -118,6 +118,44 @@ class BusManager:
         self._active_port: str | None = None
         self._pulse_timers: dict[tuple[int, int], threading.Timer] = {}
         self._engine = None
+        self._transport_macs_valid = False
+
+    def _invalidate_transport_macs(self) -> None:
+        self._transport_macs_valid = False
+
+    def _register_mac_int(self, module_id: int, module_mac: int) -> None:
+        if self._transport is None:
+            return
+        mac_b = bytes(
+            [
+                (int(module_mac) >> 40) & 0xFF,
+                (int(module_mac) >> 32) & 0xFF,
+                (int(module_mac) >> 24) & 0xFF,
+                (int(module_mac) >> 16) & 0xFF,
+                (int(module_mac) >> 8) & 0xFF,
+                int(module_mac) & 0xFF,
+            ]
+        )
+        self._transport.register_mac(int(module_id), mac_b)
+
+    def _sync_transport_macs_from_engine(self) -> None:
+        if self._transport is None:
+            return
+        engine = self._engine
+        if engine is None:
+            return
+        for item in engine.discovered_modules:
+            mid = item.get("module_id")
+            mac = item.get("module_mac")
+            if mid is None or mac is None or int(mid) in UNKNOWN_MODULE_IDS:
+                continue
+            self._register_mac_int(int(mid), int(mac))
+        self._transport_macs_valid = True
+
+    def _ensure_transport_macs(self) -> None:
+        if self._transport_macs_valid:
+            return
+        self._sync_transport_macs_from_engine()
 
     def _get_engine(self):
         if self._engine is None:
@@ -174,7 +212,7 @@ class BusManager:
                 "module_count": len(self._modules),
                 "last_scan_status": self._last_scan_status,
                 "last_scan_at": self._last_scan_at,
-                "version": "0.4.1",
+                "version": "0.4.2",
                 "mqtt_enabled": self._options.mqtt_enabled,
             }
 
@@ -600,80 +638,14 @@ class BusManager:
         return rec
 
     def _handle_message(self, message) -> None:
-        engine = self._get_engine()
-        if engine.handle_can_message(message, passive_only=True):
+        if not self._rx_enabled.is_set():
             return
         message = self._normalize_message(message)
-        if message is None or not message.data:
+        if message is None:
             return
-        data = list(message.data)
-        module_id = int(data[0])
-        rec = self._get_module(module_id)
-        if rec is None:
-            return
-        fid = message.arbitration_id
+        self._get_engine().handle_can_message(message)
 
-        if fid == CAN_ID_DEVICE_INFO and len(data) >= 8:
-            mac = ":".join(f"{b:02X}" for b in data[2:8])
-            hw = int(data[1])
-            self._register_mac(module_id, mac)
-            rec.hw_type = hw
-            rec.hw_name = HW_TYPE_NAME_MAP.get(hw, "unknown")
-            rec.mac = mac
-            self._notify()
-            return
-
-        if fid == CAN_ID_CONFIG_RESPONSE and len(data) >= 3:
-            self._handle_config_response(rec, data)
-            return
-
-        if fid == CAN_ID_RELAYS:
-            for rn, is_on in decode_relays_0x600(data):
-                st = rec.runtime.relays.setdefault(rn, RelayState(relay_no=rn))
-                st.on = is_on
-                st.source = "local"
-            self._notify()
-            return
-
-        if fid == CAN_ID_RELAYS_MCP23017:
-            for rn, is_on in decode_mcp_relays_0x602(data):
-                st = rec.runtime.relays.setdefault(rn, RelayState(relay_no=rn))
-                st.on = is_on
-                st.source = "mcp23017"
-            self._notify()
-            return
-
-        if fid == CAN_ID_RELAY_GPIO_MAP and len(data) >= 3:
-            start = int(data[1])
-            for i, gpio in enumerate(data[2:]):
-                rec.runtime.relay_gpio_map[start + i] = int(gpio)
-            self._notify()
-            return
-
-        if fid == CAN_ID_SHUTTER_STATUS and len(data) >= 4:
-            sid = int(data[1])
-            sh = rec.runtime.shutters.setdefault(sid, ShutterState(shutter_no=sid))
-            sh.position = int(data[2])
-            sh.direction = int(data[3])
-            ro, rc = rec.runtime.shutter_map.get(sid, (0, 0))
-            sh.relay_open, sh.relay_close = ro, rc
-            self._notify()
-            return
-
-        if fid == CAN_ID_SENSORS and len(data) >= 7:
-            rec.runtime.sensors.append(
-                {
-                    "sensor_no": int(data[1]),
-                    "sensor_type": int(data[2]),
-                    "data": data[3:],
-                    "ts": time.time(),
-                }
-            )
-            if len(rec.runtime.sensors) > 32:
-                rec.runtime.sensors = rec.runtime.sensors[-32:]
-            self._notify()
-
-    def _handle_config_response(self, rec: ModuleRecord, data: list[int]) -> None:
+    def _handle_config_response_legacy(self, rec: ModuleRecord, data: list[int]) -> None:
         cmd = int(data[1])
         status = int(data[2])
         if status != 0:
@@ -887,12 +859,8 @@ class BusManager:
         if not self.ensure_bus():
             return False
         module_id = int(data[0]) if data else 0xFF
-        with self._lock:
-            if self._transport is not None:
-                for mid, rec in self._modules.items():
-                    if rec.mac:
-                        self._register_mac(mid, rec.mac)
-            frames = prepare_outgoing_frames(self._transport, module_id, can_id, data)
+        self._ensure_transport_macs()
+        frames = prepare_outgoing_frames(self._transport, module_id, can_id, data)
         if not frames:
             _LOGGER.warning("TX blocked can_id=0x%X module=%s", can_id, module_id)
             return False
@@ -960,6 +928,7 @@ class BusManager:
             self._last_scan_status = "error"
             return {"ok": False, "error": self._bus_error or "bus not open"}
         result = self._get_engine().scan_modules_sync()
+        self._sync_transport_macs_from_engine()
         with self._lock:
             self._last_scan_status = "ok" if result.get("ok") else "error"
             if result.get("ok"):

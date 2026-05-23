@@ -155,8 +155,6 @@ def read_gpio_roles(bus: BusManager, module_id: int) -> dict[str, Any]:
             "flags": int(resp[5]),
         }
         time.sleep(0.04)
-
-    bus.store_gpio_roles(module_id, roles)
     return {"ok": True, "module_id": module_id, "roles": roles}
 
 

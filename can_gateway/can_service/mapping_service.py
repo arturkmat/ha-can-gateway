@@ -48,7 +48,7 @@ def _read_bindings(bus: BusManager, module_id: int) -> list[tuple[int, int, int,
         if status == 4 or status != 0:
             break
         items.append((int(resp[3]), int(resp[4]), int(resp[5]), int(resp[6]), int(resp[7])))
-        time.sleep(0.02)
+        time.sleep(0.005)
     return items
 
 
@@ -66,7 +66,7 @@ def _read_shutter_bindings(bus: BusManager, module_id: int) -> list[tuple[int, i
         if status == 4 or status != 0:
             break
         items.append((int(resp[3]), int(resp[4]), int(resp[5]), int(resp[6]), int(resp[7])))
-        time.sleep(0.02)
+        time.sleep(0.005)
     return items
 
 

@@ -734,7 +734,7 @@ document.addEventListener("keydown", e => {
 });
 
 loadAll(false);
-setInterval(() => loadAll(false), 12000);
+setInterval(() => { if (!guiRefreshInProgress && !tabLoading) loadAll(false); }, 30000);
 </script>
 </body>
 </html>
