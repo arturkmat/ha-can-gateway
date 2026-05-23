@@ -1,10 +1,8 @@
 name: CAN Gateway
-version: "0.3.0"
+version: "0.3.1"
 slug: can_gateway
-description: >-
-  Konfigurator magistrali CAN (SLCAN / gs_usb) - skan, panel web, REST API
-  dla Home Assistant. Wlasciciel dongla USB-CAN.
-url: https://github.com/arturkmat/can-control-suite
+description: CAN bus gateway (SLCAN / gs_usb), web panel and REST API for Home Assistant.
+url: https://github.com/arturkmat/ha-can-gateway
 arch:
   - aarch64
   - amd64
@@ -41,71 +39,18 @@ options:
   mqtt_topic_prefix: can_gateway
   mqtt_interval_s: 5
 schema:
-  can_interface:
-    name: Typ adaptera CAN
-    description: "slcan (USB serial) lub gs_usb (CANnectivity)"
-    type: select
-    options:
-      - slcan
-      - gs_usb
-  can_port:
-    name: Urządzenie szeregowe (SLCAN)
-    description: "Np. /dev/ttyACM0 — ignorowane przy gs_usb"
-    type: string
-  gsusb_channel:
-    name: Kanał gs_usb
-    description: "CANnectivity — zwykle 0"
-    type: integer
-    minimum: 0
-    maximum: 15
-  can_bitrate:
-    name: Bitrate magistrali CAN
-    type: select
-    options:
-      - 125000
-      - 250000
-      - 500000
-  tty_baudrate:
-    name: Baudrate portu USB (SLCAN)
-    type: select
-    options:
-      - 115200
-      - 460800
-  master_key_hex:
-    name: MASTER_KEY (64 znaki hex)
-    description: "Wymagany na szyfrowanej magistrali — 32 bajty hex bez spacji"
-    type: string
-  auto_scan:
-    name: Auto-skan GET_SUMMARY
-    description: "Co N sekund broadcast jak w konfiguratorze Windows"
-    type: boolean
-  auto_scan_interval_s:
-    name: Interwał auto-skanu (s)
-    type: integer
-    minimum: 5
-    maximum: 120
-  mqtt_enabled:
-    name: Publikuj stan przez MQTT
-    description: "Opcjonalnie — topic can_gateway/state (retain)"
-    type: boolean
-  mqtt_host:
-    name: Broker MQTT
-    description: "Na HA OS zwykle core-mosquitto"
-    type: string
-  mqtt_port:
-    name: Port MQTT
-    type: integer
-  mqtt_username:
-    name: Użytkownik MQTT
-    type: string
-  mqtt_password:
-    name: Hasło MQTT
-    type: password
-  mqtt_topic_prefix:
-    name: Prefix topiców MQTT
-    type: string
-  mqtt_interval_s:
-    name: Interwał publikacji MQTT (s)
-    type: integer
-    minimum: 2
-    maximum: 60
+  can_interface: list(slcan|gs_usb)
+  can_port: str
+  gsusb_channel: int(0,15)
+  can_bitrate: list(125000|250000|500000)
+  tty_baudrate: list(115200|460800)
+  master_key_hex: str
+  auto_scan: bool
+  auto_scan_interval_s: int(5,120)
+  mqtt_enabled: bool
+  mqtt_host: str
+  mqtt_port: port
+  mqtt_username: str
+  mqtt_password: password
+  mqtt_topic_prefix: str
+  mqtt_interval_s: int(2,60)
