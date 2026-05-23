@@ -153,7 +153,6 @@ let tabLoadTimer = null;
 let tabLoading = false;
 let mappingsCache = [];
 let sensorsCache = [];
-let loadedTabs = new Set();
 
 function apiUrl(path) {
   return new URL(String(path).replace(/^\//, ""), window.location.href).toString();
@@ -191,17 +190,12 @@ function setTabLoading(on, text) {
   tabLoading = on;
   document.getElementById("tab-load-line").innerHTML = on
     ? `<span class="warn">${text || "Ładowanie zakładki…"}</span>`
-    : "";
+    : (text || "");
   document.getElementById("btn-reload-tab").disabled = on || selectedId == null;
 }
 
 async function loadCurrentTab(force) {
   if (selectedId == null || currentTab === "logs") return;
-  const tabKey = `${selectedId}:${currentTab}`;
-  if (!force && loadedTabs.has(tabKey)) {
-    renderActivePanel();
-    return;
-  }
   if (tabLoading && !force) return;
   setTabLoading(true, `[tab-load] ID=${selectedId} · ${currentTab}`);
   appendLog(`[tab-load] ID=${selectedId}, zakladka=${currentTab}...`);
@@ -214,11 +208,12 @@ async function loadCurrentTab(force) {
     const mark = step.ok ? "OK" : "ERR";
     appendLog(`  ${step.name}: ${mark}${step.error ? " — " + step.error : ""}`);
   }
-  if (!res.ok) appendLog(`  blad: ${data.error || res.status}`);
-  else {
-    loadedTabs.add(tabKey);
-    appendLog(`[tab-load] zakonczono zakladke ID=${selectedId}.`);
+  if (!res.ok) {
+    appendLog(`  blad: ${data.error || res.status}`);
+    setTabLoading(false, `<span class="err">Blad ladowania: ${data.error || res.status}</span>`);
+    return;
   }
+  appendLog(`[tab-load] zakonczono zakladke ID=${selectedId}.`);
   if (data.mappings) mappingsCache = data.mappings;
   if (data.sensors) sensorsCache = data.sensors;
   if (data.control_relays?.length && selectedId != null) {
@@ -260,11 +255,12 @@ async function loadAll(refreshTab) {
 
 function renderActivePanel() {
   if (selectedId == null) return;
+  const m = moduleById(selectedId);
   if (currentTab === "control") renderControl(selectedId);
   if (currentTab === "gpio") renderGpioTab(selectedId);
   if (currentTab === "shutters") renderShutters(selectedId);
-  if (currentTab === "mapping") renderMappings(mappingsCache);
-  if (currentTab === "sensors") renderSensors(sensorsCache);
+  if (currentTab === "mapping") renderMappings(m?.runtime?.mappings?.length ? m.runtime.mappings : mappingsCache);
+  if (currentTab === "sensors") renderSensors(m?.runtime?.sensors?.length ? m.runtime.sensors : sensorsCache);
 }
 
 function updateButtons() {
@@ -292,7 +288,6 @@ async function selectModule(id) {
   pinoutCache = null;
   mappingsCache = [];
   sensorsCache = [];
-  loadedTabs = new Set();
   document.getElementById("sel-id").textContent = id;
   document.getElementById("ota-box").style.display = "none";
   renderModules();
@@ -490,18 +485,17 @@ document.getElementById("btn-deep-refresh").onclick = async () => {
   appendLog(`[deep-refresh] modul ID=${selectedId}...`);
   const { res, data } = await api(`/api/modules/${selectedId}/refresh`, { method: "POST" });
   appendLog(res.ok ? "[deep-refresh] OK" : `[deep-refresh] blad: ${data.error || res.status}`);
-  loadedTabs = new Set();
   await loadAll(true);
   await loadCurrentTab(true);
   document.getElementById("btn-deep-refresh").disabled = false;
 };
-document.getElementById("btn-reload-tab").onclick = () => { loadedTabs.delete(`${selectedId}:${currentTab}`); loadCurrentTab(true); };
+document.getElementById("btn-reload-tab").onclick = () => loadCurrentTab(true);
 document.getElementById("btn-scan").onclick = async () => {
   document.getElementById("btn-scan").disabled = true;
   appendLog("Skan F5...");
   await api("/api/scan", { method: "POST" });
-  loadedTabs = new Set();
   await loadAll(true);
+  if (selectedId != null) await loadCurrentTab(true);
   document.getElementById("btn-scan").disabled = false;
 };
 document.getElementById("btn-reboot").onclick = async () => {

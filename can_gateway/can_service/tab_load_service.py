@@ -1,4 +1,4 @@
-"""Lazy-load zakładek panelu web — analogicznie do konfiguratora Windows (_schedule_tab_load)."""
+"""Lazy-load zakładek — kroki jak konfigurator Windows (_build_tab_load_steps)."""
 
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ from protocol_constants import (
     COMMAND_GET_BUILD_INFO,
     COMMAND_GET_BUTTON_TIMING,
     COMMAND_GET_MODULE_NAME,
-    COMMAND_GET_RELAY_PULSE,
     COMMAND_GET_SHUTTER_RELAYS,
     COMMAND_GET_SUMMARY,
     MAX_SHUTTERS,
+    PIN_ROLE_MAP,
 )
 
-from .gpio_service import read_gpio_roles, read_gpio_values, read_relay_pulse_ms
+from .gpio_service import read_gpio_roles
 from .mapping_service import read_all_mappings
 
 if TYPE_CHECKING:
@@ -36,17 +36,18 @@ def _ensure_summary(bus: BusManager, module_id: int) -> None:
     detail = bus.module_detail(module_id)
     if detail and detail.get("summary_details"):
         return
-    bus.send_config_and_wait(module_id, COMMAND_GET_SUMMARY, timeout=0.6)
+    bus.send_config_and_wait(module_id, COMMAND_GET_SUMMARY, timeout=0.8)
     time.sleep(0.12)
+    bus.collect_module_telemetry(module_id, 0.4)
 
 
 def _load_modules_tab(bus: BusManager, module_id: int) -> dict[str, Any]:
     steps = [
-        _step("Podsumowanie modulu", lambda: bus.send_config_and_wait(module_id, COMMAND_GET_SUMMARY, timeout=0.6)),
+        _step("Podsumowanie modulu", lambda: bus.send_config_and_wait(module_id, COMMAND_GET_SUMMARY, timeout=0.8)),
         _step("Nazwa modulu", lambda: bus.send_config_and_wait(module_id, COMMAND_GET_MODULE_NAME, timeout=0.5)),
         _step("Build info", lambda: bus.send_config_and_wait(module_id, COMMAND_GET_BUILD_INFO, timeout=0.5)),
     ]
-    bus.pump_rx(0.3)
+    bus.collect_module_telemetry(module_id, 0.35)
     detail = bus.module_detail(module_id)
     return {"ok": True, "tab": "modules", "steps": steps, "module": detail}
 
@@ -55,13 +56,6 @@ def _load_gpio_tab(bus: BusManager, module_id: int) -> dict[str, Any]:
     steps: list[dict[str, Any]] = []
     steps.append(_step("Podsumowanie modulu", lambda: _ensure_summary(bus, module_id)))
 
-    def _roles() -> None:
-        result = read_gpio_roles(bus, module_id)
-        if not result.get("ok"):
-            raise RuntimeError(str(result.get("error", "read_gpio_roles failed")))
-
-    steps.append(_step("Role GPIO", _roles))
-
     def _timing() -> None:
         resp = bus.send_config_and_wait(module_id, COMMAND_GET_BUTTON_TIMING, timeout=0.5)
         if resp is None or len(resp) < 5 or int(resp[2]) != 0:
@@ -69,7 +63,14 @@ def _load_gpio_tab(bus: BusManager, module_id: int) -> dict[str, Any]:
         bus.store_button_timing(module_id, int(resp[3]) * 10, int(resp[4]) * 10)
 
     steps.append(_step("Czasy przyciskow", _timing))
-    bus.pump_rx(0.2)
+
+    def _roles() -> None:
+        result = read_gpio_roles(bus, module_id)
+        if not result.get("ok"):
+            raise RuntimeError(str(result.get("error", "read_gpio_roles failed")))
+        bus.sync_relay_gpio_map_from_roles(module_id)
+
+    steps.append(_step("Role GPIO", _roles))
     return {
         "ok": all(s.get("ok", False) for s in steps),
         "tab": "gpio",
@@ -78,40 +79,11 @@ def _load_gpio_tab(bus: BusManager, module_id: int) -> dict[str, Any]:
     }
 
 
-def _sync_relay_pulses(bus: BusManager, module_id: int, *, only_missing: bool = False) -> None:
-    """Jak konfigurator _sync_relay_pulse_cache_for_current_module."""
-    detail = bus.module_detail(module_id) or {}
-    known = {int(k) for k in ((detail.get("runtime") or {}).get("relay_pulse_ms") or {})}
-    for relay_no in sorted(bus.relay_numbers_for_module(module_id)):
-        if only_missing and int(relay_no) in known:
-            continue
-        read_relay_pulse_ms(bus, module_id, int(relay_no))
-        time.sleep(0.02)
-
-
 def _load_control_tab(bus: BusManager, module_id: int) -> dict[str, Any]:
-    """Jak konfigurator _load_control_tab_outputs: role, pulse cache, stany GPIO + broadcast 0x600/602."""
-    steps: list[dict[str, Any]] = []
-    steps.append(_step("Podsumowanie modulu", lambda: _ensure_summary(bus, module_id)))
-    steps.append(_step("Metadane wyjsc (MCP/HC595)", lambda: bus.ensure_relay_metadata(module_id)))
-
-    detail = bus.module_detail(module_id) or {}
-    rt = detail.get("runtime") or {}
-    if not rt.get("gpio_roles"):
-        def _roles() -> None:
-            result = read_gpio_roles(bus, module_id)
-            if not result.get("ok"):
-                raise RuntimeError(str(result.get("error", "read_gpio_roles failed")))
-
-        steps.append(_step("Role GPIO", _roles))
-
-    steps.append(_step("Impulsy przekaznikow", lambda: _sync_relay_pulses(bus, module_id, only_missing=False)))
-
-    def _values_and_broadcast() -> None:
-        read_gpio_values(bus, module_id)
-        bus.collect_relay_state_frames(1.0)
-
-    steps.append(_step("Stany wyjsc (GPIO + 0x600/602)", _values_and_broadcast))
+    steps: list[dict[str, Any]] = [
+        _step("Podsumowanie modulu", lambda: _ensure_summary(bus, module_id)),
+        _step("Lista wyjsc (jak konfigurator)", lambda: bus.load_control_tab_outputs(module_id)),
+    ]
     detail = bus.module_detail(module_id)
     return {
         "ok": all(s.get("ok", False) for s in steps),
@@ -129,22 +101,19 @@ def _load_shutters_tab(bus: BusManager, module_id: int) -> dict[str, Any]:
 
     def _read_shutters() -> None:
         if shutter_count <= 0:
+            bus.clear_shutter_config(module_id)
             return
         for shutter_no in range(1, MAX_SHUTTERS + 1):
-            resp = bus.send_config_and_wait(module_id, COMMAND_GET_SHUTTER_RELAYS, [shutter_no], timeout=0.2)
-            if resp is None or len(resp) < 6 or int(resp[2]) != 0:
-                continue
-            ro, rc = int(resp[4]), int(resp[5])
-            if ro <= 0 and rc <= 0:
-                continue
+            bus.send_config_and_wait(module_id, COMMAND_GET_SHUTTER_RELAYS, [shutter_no], timeout=0.25)
             time.sleep(0.06)
-        bus.collect_relay_state_frames(0.35)
+        bus.collect_module_telemetry(module_id, 0.6)
 
     steps.append(_step("Konfiguracja rolet", _read_shutters))
     return {"ok": True, "tab": "shutters", "steps": steps, "shutter_count": shutter_count}
 
 
 def _load_mapping_tab(bus: BusManager, module_id: int) -> dict[str, Any]:
+    _ensure_summary(bus, module_id)
     result = read_all_mappings(bus, module_id)
     steps = [{"name": "Mapowania", "ok": bool(result.get("ok"))}]
     if not result.get("ok"):
@@ -153,16 +122,22 @@ def _load_mapping_tab(bus: BusManager, module_id: int) -> dict[str, Any]:
 
 
 def _load_sensors_tab(bus: BusManager, module_id: int) -> dict[str, Any]:
-    """Konfigurator: brak auto-skenu — dane na żywo z ramek 0x400 po wejściu w zakładkę."""
     steps: list[dict[str, Any]] = []
     steps.append(_step("Podsumowanie modulu", lambda: _ensure_summary(bus, module_id)))
 
-    def _listen_live() -> None:
-        deadline = time.time() + 1.5
-        while time.time() < deadline:
-            bus.pump_rx(0.05)
+    def _ntc_from_roles() -> None:
+        detail = bus.module_detail(module_id) or {}
+        roles = (detail.get("runtime") or {}).get("gpio_roles") or {}
+        if not roles:
+            read_gpio_roles(bus, module_id)
+            detail = bus.module_detail(module_id) or {}
+            roles = (detail.get("runtime") or {}).get("gpio_roles") or {}
+        has_ntc = any(int(v.get("role", 0)) == PIN_ROLE_MAP["NTC"] for v in roles.values())
+        if not has_ntc:
+            return
+        bus.collect_module_telemetry(module_id, 1.5)
 
-    steps.append(_step("Nasłuch ramek sensor (0x400)", _listen_live))
+    steps.append(_step("NTC z konfiguracji + nasłuch 0x400", _ntc_from_roles))
     detail = bus.module_detail(module_id) or {}
     sensors = list((detail.get("runtime") or {}).get("sensors") or [])
     return {"ok": True, "tab": "sensors", "steps": steps, "sensors": sensors}
@@ -180,7 +155,7 @@ def load_module_tab(bus: BusManager, module_id: int, tab: str) -> dict[str, Any]
     if not (1 <= mid <= 254):
         return {"ok": False, "error": "invalid module_id"}
 
-    if not bus._begin_command_io():  # noqa: SLF001
+    if not bus._begin_exclusive_io():  # noqa: SLF001
         return {"ok": False, "error": "bus busy (scan/refresh in progress)"}
     try:
         if tab_key == "modules":
@@ -197,4 +172,4 @@ def load_module_tab(bus: BusManager, module_id: int, tab: str) -> dict[str, Any]
             return _load_sensors_tab(bus, mid)
         return {"ok": False, "error": "unsupported tab"}
     finally:
-        bus._end_command_io()  # noqa: SLF001
+        bus._end_exclusive_io()  # noqa: SLF001

@@ -55,6 +55,7 @@ _BROADCAST_GAP_S = 0.08
 _PASSIVE_LISTEN_S = 4.5
 _NAME_READ_GAP_S = 0.25
 MAX_LOCAL_RELAYS = 16
+RELAY_GPIO_ROLE = 2  # PIN_ROLE_MAP["Relay"]
 
 SHUTTER_CMD_MAP = {"open": 1, "close": 2, "stop": 3, "position": 4}
 
@@ -166,7 +167,7 @@ class BusManager:
                 "module_count": len(self._modules),
                 "last_scan_status": self._last_scan_status,
                 "last_scan_at": self._last_scan_at,
-                "version": "0.3.13",
+                "version": "0.3.14",
                 "mqtt_enabled": self._options.mqtt_enabled,
             }
 
@@ -222,6 +223,11 @@ class BusManager:
             if rc > 0:
                 reserved.add(int(rc))
         nums: set[int] = set()
+        for _gpio, role_info in rec.runtime.gpio_roles.items():
+            if int(role_info.get("role", 0)) == RELAY_GPIO_ROLE:
+                idx = int(role_info.get("index", 0))
+                if idx > 0:
+                    nums.add(idx)
         for rn, gpio in rec.runtime.relay_gpio_map.items():
             if 1 <= rn <= MAX_LOCAL_RELAYS and gpio != 255:
                 nums.add(int(rn))
@@ -291,24 +297,64 @@ class BusManager:
         self._pulse_timers[key] = timer
         timer.start()
 
-    def ensure_relay_metadata(self, module_id: int) -> None:
-        """Summary + MCP23017 role dump — potrzebne do listy wyjść HC595/MCP."""
-        mid = int(module_id)
-        detail = self.module_detail(mid)
-        if detail and not detail.get("summary_details"):
-            self.send_config_and_wait(mid, COMMAND_GET_SUMMARY, timeout=0.6)
-            time.sleep(0.1)
+    def collect_module_telemetry(self, module_id: int, timeout_s: float = 1.0) -> None:
+        """Nasłuch 0x600/0x601/0x602/0x660 po GET_SUMMARY — jak konfigurator po skanie."""
+        del module_id
+        self.collect_relay_state_frames(timeout_s)
+
+    def sync_relay_gpio_map_from_roles(self, module_id: int) -> None:
         with self._lock:
-            rec = self._modules.get(mid)
+            rec = self._modules.get(int(module_id))
             if rec is None:
                 return
-            need_mcp = not rec.runtime.mcp_relay_pins
-        if need_mcp:
-            self.send_config_and_wait(mid, COMMAND_SCAN_MCP23017, timeout=1.5)
-            time.sleep(0.1)
-            for chip in range(8):
-                self.send_config_and_wait(mid, COMMAND_GET_MCP23017_ROLE_DUMP, [chip], timeout=0.25)
-                time.sleep(0.055)
+            for role_info in rec.runtime.gpio_roles.values():
+                if int(role_info.get("role", 0)) != RELAY_GPIO_ROLE:
+                    continue
+                idx = int(role_info.get("index", 0))
+                gpio = int(role_info.get("gpio", 0))
+                if idx > 0 and gpio > 0:
+                    rec.runtime.relay_gpio_map[idx] = gpio
+            self._notify()
+
+    def ensure_relay_metadata(self, module_id: int) -> None:
+        """Skan MCP23017 + role dump gdy moduł ma expander (hw_flags bit3)."""
+        mid = int(module_id)
+        with self._lock:
+            rec = self._modules.get(mid)
+            hw_flags = int(rec.runtime.hw_flags) if rec is not None else 0
+            need_mcp = rec is None or not rec.runtime.mcp_relay_pins
+        if not ((hw_flags & 0x08) or need_mcp):
+            return
+        self.send_config_and_wait(mid, COMMAND_SCAN_MCP23017, timeout=1.5)
+        time.sleep(0.1)
+        for chip in range(8):
+            self.send_config_and_wait(mid, COMMAND_GET_MCP23017_ROLE_DUMP, [chip], timeout=0.25)
+            time.sleep(0.055)
+
+    def clear_shutter_config(self, module_id: int) -> None:
+        with self._lock:
+            rec = self._modules.get(int(module_id))
+            if rec is None:
+                return
+            rec.runtime.shutter_map.clear()
+            rec.runtime.shutters.clear()
+            self._notify()
+
+    def load_control_tab_outputs(self, module_id: int) -> None:
+        """Jak konfigurator _load_control_tab_outputs."""
+        from .gpio_service import read_gpio_roles, read_gpio_values, read_relay_pulse_ms
+
+        mid = int(module_id)
+        detail = self.module_detail(mid) or {}
+        if not (detail.get("runtime") or {}).get("gpio_roles"):
+            read_gpio_roles(self, mid)
+        self.sync_relay_gpio_map_from_roles(mid)
+        self.ensure_relay_metadata(mid)
+        for relay_no in sorted(self.relay_numbers_for_module(mid)):
+            read_relay_pulse_ms(self, mid, int(relay_no))
+            time.sleep(0.02)
+        read_gpio_values(self, mid)
+        self.collect_relay_state_frames(1.0)
 
     def relay_numbers_for_module(self, module_id: int) -> set[int]:
         with self._lock:
@@ -316,6 +362,11 @@ class BusManager:
             if rec is None:
                 return set()
             nums: set[int] = set()
+            for _gpio, role_info in rec.runtime.gpio_roles.items():
+                if int(role_info.get("role", 0)) == RELAY_GPIO_ROLE:
+                    idx = int(role_info.get("index", 0))
+                    if idx > 0:
+                        nums.add(idx)
             for rn, gpio in rec.runtime.relay_gpio_map.items():
                 if 1 <= rn <= MAX_LOCAL_RELAYS and gpio != 255:
                     nums.add(int(rn))
@@ -708,6 +759,13 @@ class BusManager:
             if rec is None:
                 return
             rec.runtime.gpio_roles = dict(roles)
+            for role_info in roles.values():
+                if int(role_info.get("role", 0)) != RELAY_GPIO_ROLE:
+                    continue
+                idx = int(role_info.get("index", 0))
+                gpio = int(role_info.get("gpio", 0))
+                if idx > 0 and gpio > 0:
+                    rec.runtime.relay_gpio_map[idx] = gpio
             self._notify()
 
     def store_gpio_values(self, module_id: int, values: dict[str, dict[str, Any]]) -> None:
