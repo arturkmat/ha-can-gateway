@@ -68,6 +68,8 @@ class ModuleRuntimeState:
             "shutters": self.shutter_list(),
             "shutter_map": {str(k): list(v) for k, v in self.shutter_map.items()},
             "relay_gpio_map": {str(k): v for k, v in self.relay_gpio_map.items()},
+            "relay_pulse_ms": {str(k): v for k, v in self.relay_pulse_ms.items()},
+            "mcp_relay_pins": {str(k): sorted(v) for k, v in self.mcp_relay_pins.items()},
             "hw_flags": self.hw_flags,
             "sensors": list(self.sensors),
             "gpio_roles": dict(self.gpio_roles),

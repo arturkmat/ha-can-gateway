@@ -65,6 +65,9 @@ class ModuleRecord:
     name: str | None = None
     firmware_build: str | None = None
     summary_details: str = ""
+    button_count: int | None = None
+    relay_count: int | None = None
+    shutter_count: int | None = None
     last_seen_s: float = 0.0
     runtime: ModuleRuntimeState = field(default_factory=ModuleRuntimeState)
 
@@ -77,6 +80,9 @@ class ModuleRecord:
             "name": self.name,
             "firmware_build": self.firmware_build,
             "summary_details": self.summary_details,
+            "button_count": self.button_count,
+            "relay_count": self.relay_count,
+            "shutter_count": self.shutter_count,
             "last_seen_s": self.last_seen_s,
         }
         if include_runtime:
@@ -409,7 +415,13 @@ class BusManager:
             return
         if cmd == COMMAND_GET_SUMMARY:
             rec.summary_details = self._build_summary_details(data)
-            rec.runtime.hw_flags = int(data[7]) if len(data) > 7 else 0
+            if len(data) >= 8:
+                rec.button_count = int(data[3])
+                rec.relay_count = int(data[4])
+                rec.shutter_count = int(data[6])
+                rec.runtime.hw_flags = int(data[7])
+            elif len(data) > 7:
+                rec.runtime.hw_flags = int(data[7])
         elif cmd == COMMAND_GET_MODULE_NAME:
             rec.name = self._ascii_from_bytes(data[3:]) or None
         elif cmd == COMMAND_GET_BUILD_INFO and len(data) >= 8:
