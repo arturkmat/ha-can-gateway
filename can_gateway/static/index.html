@@ -152,6 +152,7 @@ let tabLoadTimer = null;
 let tabLoading = false;
 let mappingsCache = [];
 let sensorsCache = [];
+let loadedTabs = new Set();
 
 function apiUrl(path) {
   return new URL(String(path).replace(/^\//, ""), window.location.href).toString();
@@ -195,6 +196,11 @@ function setTabLoading(on, text) {
 
 async function loadCurrentTab(force) {
   if (selectedId == null || currentTab === "logs") return;
+  const tabKey = `${selectedId}:${currentTab}`;
+  if (!force && loadedTabs.has(tabKey)) {
+    renderActivePanel();
+    return;
+  }
   if (tabLoading && !force) return;
   setTabLoading(true, `[tab-load] ID=${selectedId} · ${currentTab}`);
   appendLog(`[tab-load] ID=${selectedId}, zakladka=${currentTab}...`);
@@ -208,7 +214,10 @@ async function loadCurrentTab(force) {
     appendLog(`  ${step.name}: ${mark}${step.error ? " — " + step.error : ""}`);
   }
   if (!res.ok) appendLog(`  blad: ${data.error || res.status}`);
-  else appendLog(`[tab-load] zakonczono zakladke ID=${selectedId}.`);
+  else {
+    loadedTabs.add(tabKey);
+    appendLog(`[tab-load] zakonczono zakladke ID=${selectedId}.`);
+  }
   if (data.mappings) mappingsCache = data.mappings;
   if (data.sensors) sensorsCache = data.sensors;
   await loadAll(false);
@@ -278,6 +287,7 @@ async function selectModule(id) {
   pinoutCache = null;
   mappingsCache = [];
   sensorsCache = [];
+  loadedTabs = new Set();
   document.getElementById("sel-id").textContent = id;
   document.getElementById("ota-box").style.display = "none";
   renderModules();
@@ -424,8 +434,25 @@ function renderGpioTable() {
 }
 
 async function setRelay(mid, relayNo, state) {
-  await api(`/api/modules/${mid}/relays/${relayNo}`, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ state }) });
-  await loadAll(false); renderControl(mid);
+  const { res, data } = await api(`/api/modules/${mid}/relays/${relayNo}`, {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ state }),
+  });
+  if (res.ok && data.on !== undefined) {
+    const m = moduleById(mid);
+    if (m) {
+      m.runtime = m.runtime || {};
+      m.runtime.relays = m.runtime.relays || [];
+      let row = m.runtime.relays.find(r => r.relay_no === relayNo);
+      if (row) row.on = data.on;
+      else m.runtime.relays.push({ relay_no: relayNo, on: data.on, pulse_ms: 0, source: "local" });
+    }
+    renderControl(mid);
+    return;
+  }
+  await loadAll(false);
+  renderControl(mid);
 }
 async function setPulse(mid, relayNo, pulse_ms) {
   await api(`/api/modules/${mid}/relays/${relayNo}/pulse`, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ pulse_ms: Number(pulse_ms) }) });
