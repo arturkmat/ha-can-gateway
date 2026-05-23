@@ -5,7 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from protocol_constants import MCP23017_RELAY_CAN_BASE
+from protocol_constants import (
+    MCP23017_RELAY_CAN_BASE,
+    SHIFT595_MAX_REGISTERS,
+    SHIFT595_RELAY_BASE_INDEX,
+    SHIFT595_RELAY_COUNT_PER_REGISTER,
+)
 
 
 @dataclass
@@ -82,14 +87,26 @@ class ModuleRuntimeState:
 
 
 def decode_relays_0x600(data: list[int]) -> list[tuple[int, bool]]:
-    if len(data) < 2:
+    """Dekoduj 0x600 jak konfigurator/firmware: lo(1-8), hi(9-16), ext(HC595)."""
+    if len(data) < 3:
         return []
+    lo = int(data[1])
+    hi = int(data[2])
+    ext_bits = 0
+    for byte_index, byte_value in enumerate(data[3:]):
+        ext_bits |= (int(byte_value) & 0xFF) << (8 * byte_index)
     out: list[tuple[int, bool]] = []
-    relay_no = 1
-    for byte in data[1:]:
-        for bit in range(8):
-            out.append((relay_no, bool((byte >> bit) & 0x01)))
-            relay_no += 1
+    for relay_index in range(1, 17):
+        if relay_index <= 8:
+            on = bool(lo & (1 << (relay_index - 1)))
+        else:
+            on = bool(hi & (1 << (relay_index - 9)))
+        out.append((relay_index, on))
+    max_ext = SHIFT595_MAX_REGISTERS * SHIFT595_RELAY_COUNT_PER_REGISTER
+    for offset in range(max_ext):
+        relay_index = SHIFT595_RELAY_BASE_INDEX + offset
+        on = bool(ext_bits & (1 << offset))
+        out.append((relay_index, on))
     return out
 
 

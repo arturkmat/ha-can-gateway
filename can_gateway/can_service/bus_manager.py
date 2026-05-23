@@ -36,6 +36,7 @@ from protocol_constants import (
 )
 
 from .can_send import prepare_outgoing_frames
+from .configurator_bridge import create_engine
 from .deep_config import refresh_module_deep as _refresh_module_deep_impl
 from .module_state import (
     ModuleRuntimeState,
@@ -116,6 +117,12 @@ class BusManager:
         self._reconnect_thread: threading.Thread | None = None
         self._active_port: str | None = None
         self._pulse_timers: dict[tuple[int, int], threading.Timer] = {}
+        self._engine = None
+
+    def _get_engine(self):
+        if self._engine is None:
+            self._engine = create_engine(self)
+        return self._engine
 
     def start(self) -> None:
         master = self._options.master_key_bytes
@@ -167,29 +174,36 @@ class BusManager:
                 "module_count": len(self._modules),
                 "last_scan_status": self._last_scan_status,
                 "last_scan_at": self._last_scan_at,
-                "version": "0.3.14",
+                "version": "0.4.0",
                 "mqtt_enabled": self._options.mqtt_enabled,
             }
 
     def full_state(self) -> dict[str, Any]:
-        with self._lock:
-            modules = []
-            for rec in sorted(self._modules.values(), key=lambda r: r.module_id):
-                row = rec.to_dict(include_runtime=True)
-                row["control_relays"] = self._relay_controls_from_record(rec)
-                modules.append(row)
-            return {
-                "status": self.status(),
-                "modules": modules,
-            }
+        engine = self._get_engine()
+        modules = [engine.export_module_dict(rec["module_id"]) for rec in engine.list_modules()]
+        if not modules:
+            with self._lock:
+                for rec in sorted(self._modules.values(), key=lambda r: r.module_id):
+                    modules.append(rec.to_dict(include_runtime=True))
+        return {"status": self.status(), "modules": modules}
 
     def list_modules(self) -> list[dict[str, Any]]:
+        rows = self._get_engine().list_modules()
+        if rows:
+            return rows
         with self._lock:
             return [rec.to_dict() for rec in sorted(self._modules.values(), key=lambda r: r.module_id)]
 
     def module_detail(self, module_id: int) -> dict[str, Any] | None:
+        mid = int(module_id)
+        engine = self._get_engine()
+        for rec in engine.discovered_modules:
+            if rec.get("module_id") == mid:
+                return engine.export_module_dict(mid)
+        if mid in engine._contexts:  # noqa: SLF001
+            return engine.export_module_dict(mid)
         with self._lock:
-            rec = self._modules.get(int(module_id))
+            rec = self._modules.get(mid)
             if rec is None:
                 return None
             out = rec.to_dict(include_runtime=True)
@@ -341,20 +355,7 @@ class BusManager:
             self._notify()
 
     def load_control_tab_outputs(self, module_id: int) -> None:
-        """Jak konfigurator _load_control_tab_outputs."""
-        from .gpio_service import read_gpio_roles, read_gpio_values, read_relay_pulse_ms
-
-        mid = int(module_id)
-        detail = self.module_detail(mid) or {}
-        if not (detail.get("runtime") or {}).get("gpio_roles"):
-            read_gpio_roles(self, mid)
-        self.sync_relay_gpio_map_from_roles(mid)
-        self.ensure_relay_metadata(mid)
-        for relay_no in sorted(self.relay_numbers_for_module(mid)):
-            read_relay_pulse_ms(self, mid, int(relay_no))
-            time.sleep(0.02)
-        read_gpio_values(self, mid)
-        self.collect_relay_state_frames(1.0)
+        self._get_engine().load_control_tab_outputs(int(module_id))
 
     def relay_numbers_for_module(self, module_id: int) -> set[int]:
         with self._lock:
@@ -599,6 +600,9 @@ class BusManager:
         return rec
 
     def _handle_message(self, message) -> None:
+        engine = self._get_engine()
+        if engine.handle_can_message(message, passive_only=True):
+            return
         message = self._normalize_message(message)
         if message is None or not message.data:
             return
@@ -727,31 +731,9 @@ class BusManager:
         *,
         timeout: float = 1.0,
     ) -> list[int] | None:
-        if not self.send_config(module_id, command, args):
-            return None
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            if self._bus is None:
-                return None
-            message = self._recv(min(0.05, max(0.0, deadline - time.time())))
-            if message is None:
-                continue
-            with self._lock:
-                message = self._normalize_message(message)
-                if message is None:
-                    continue
-                self._handle_message(message)
-                if message.arbitration_id != CAN_ID_CONFIG_RESPONSE:
-                    continue
-                data = list(message.data)
-                if len(data) < 3:
-                    continue
-                if int(data[1]) != int(command):
-                    continue
-                if int(data[0]) != int(module_id):
-                    continue
-                return data
-        return None
+        return self._get_engine().send_request(
+            int(module_id), int(command), args, timeout=timeout, log_traffic=False
+        )
 
     def store_gpio_roles(self, module_id: int, roles: dict[str, dict[str, Any]]) -> None:
         with self._lock:
@@ -931,51 +913,7 @@ class BusManager:
     def set_relay_state(self, module_id: int, relay_no: int, state: str) -> dict[str, Any]:
         if not self.ensure_bus():
             return {"ok": False, "error": self._bus_error or "bus not open"}
-        state_map = {"on": 1, "off": 0, "toggle": 2}
-        code = state_map.get(str(state).lower())
-        if code is None:
-            return {"ok": False, "error": "invalid state"}
-        mid = int(module_id)
-        rn = int(relay_no)
-        if rn in self.shutter_reserved_relays(mid):
-            return {
-                "ok": False,
-                "error": "relay assigned to shutter",
-                "module_id": mid,
-                "relay_no": rn,
-            }
-        pulse_ms = self.relay_pulse_ms_for(mid, rn)
-        if pulse_ms > 0 and code == 2:
-            code = 1
-        if not self._begin_command_io(blocking=True, timeout=3.0):
-            return {"ok": False, "error": "bus busy (scan/tab-load in progress)", "module_id": mid, "relay_no": rn}
-        try:
-            resp = self.send_config_and_wait(mid, COMMAND_SET_RELAY_STATE, [rn, code], timeout=0.35)
-            if resp is not None and len(resp) >= 5 and int(resp[2]) == 0:
-                is_on = bool(int(resp[4]))
-                self.store_relay_state(mid, rn, is_on)
-            elif resp is not None and len(resp) >= 3 and int(resp[2]) != 0:
-                return {
-                    "ok": False,
-                    "error": f"status={int(resp[2])}",
-                    "module_id": mid,
-                    "relay_no": rn,
-                }
-            else:
-                row = self._relay_cache_row(mid, rn)
-                if row is None:
-                    self.collect_relay_state_frames(0.12)
-                    row = self._relay_cache_row(mid, rn)
-                if row is None:
-                    return {"ok": False, "error": "no response", "module_id": mid, "relay_no": rn}
-                is_on = bool(row.get("on"))
-            if pulse_ms > 0 and code == 1 and is_on:
-                self._schedule_pulse_resync(mid, rn, pulse_ms)
-            elif code in (0, 1):
-                self.collect_relay_state_frames(0.15)
-            return {"ok": True, "module_id": mid, "relay_no": rn, "state": state, "on": is_on, "pulse_ms": pulse_ms}
-        finally:
-            self._end_command_io()
+        return self._get_engine().set_relay_state(int(module_id), int(relay_no), state)
 
     def set_shutter_command(
         self,
@@ -1021,48 +959,9 @@ class BusManager:
         if not self.ensure_bus():
             self._last_scan_status = "error"
             return {"ok": False, "error": self._bus_error or "bus not open"}
-        if not self._begin_exclusive_io():
-            return {"ok": False, "error": "scan already in progress"}
-
-        try:
-            with self._lock:
-                before = len(self._modules)
-            self._drain_rx()
-            for attempt in range(_BROADCAST_ATTEMPTS):
-                self.send_config(0xFF, COMMAND_GET_SUMMARY)
-                if attempt < _BROADCAST_ATTEMPTS - 1:
-                    time.sleep(_BROADCAST_GAP_S)
-
-            deadline = time.time() + _PASSIVE_LISTEN_S
-            while time.time() < deadline:
-                if self._bus is None and not self.ensure_bus():
-                    raise RuntimeError(self._bus_error or "bus closed during scan")
-                self.pump_rx(min(0.05, max(0.0, deadline - time.time())))
-
-            module_ids = sorted(self._modules.keys())
-            for module_id in module_ids:
-                self.send_config(module_id, COMMAND_GET_SUMMARY)
-                time.sleep(0.15)
-                self.send_config(module_id, COMMAND_GET_MODULE_NAME)
-                time.sleep(_NAME_READ_GAP_S)
-                self.send_config(module_id, COMMAND_GET_BUILD_INFO)
-                time.sleep(_NAME_READ_GAP_S)
-                dl = time.time() + 0.6
-                while time.time() < dl:
-                    if self._bus is None and not self.ensure_bus():
-                        raise RuntimeError(self._bus_error or "bus closed during scan")
-                    self.pump_rx(0.05)
-
-            with self._lock:
-                count = len(self._modules)
-                self._last_scan_status = "ok"
+        result = self._get_engine().scan_modules_sync()
+        with self._lock:
+            self._last_scan_status = "ok" if result.get("ok") else "error"
+            if result.get("ok"):
                 self._last_scan_at = time.time()
-
-            _LOGGER.info("Discovery scan finished: modules=%d (was %d)", count, before)
-            return {"ok": True, "modules_before": before, "modules_after": count, "modules": self.list_modules()}
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.error("Discovery scan failed: %s", err, exc_info=True)
-            self._last_scan_status = "error"
-            return {"ok": False, "error": str(err)}
-        finally:
-            self._end_exclusive_io()
+        return result
