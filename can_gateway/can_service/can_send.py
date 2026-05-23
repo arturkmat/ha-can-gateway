@@ -24,10 +24,12 @@ def prepare_outgoing_frames(
     if can_id in _PREWRAPPED_CAN_IDS:
         return [(can_id, padded)]
 
-    if is_plaintext_bootstrap_tx(can_id, raw) or can_id in PLAINTEXT_TELEMETRY_CAN_IDS:
+    if is_plaintext_bootstrap_tx(can_id, raw):
         return [(can_id, padded)]
 
     if transport is None:
+        if can_id in PLAINTEXT_TELEMETRY_CAN_IDS:
+            return [(can_id, padded)]
         return None
 
     if can_id == CAN_ID_CONFIG_REQUEST:

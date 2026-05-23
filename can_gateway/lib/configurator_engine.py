@@ -1180,7 +1180,17 @@ class ConfiguratorEngine:
             and not is_plaintext_bootstrap_tx(can_id, raw, module_has_master_key=module_has_key)
         ):
             raise RuntimeError(f"Module ID={target_module_id} blocked (MASTER_KEY mismatch)")
-        if is_plaintext_bootstrap_tx(can_id, raw, module_has_master_key=module_has_key) or can_id in PLAINTEXT_TELEMETRY_CAN_IDS:
+        if is_plaintext_bootstrap_tx(can_id, raw, module_has_master_key=module_has_key):
+            self._io.send_can_frame(can_id, list(raw))
+            return
+        if can_id in PLAINTEXT_TELEMETRY_CAN_IDS and self._master_key is None:
+            self._io.send_can_frame(can_id, list(raw))
+            return
+        if (
+            can_id in PLAINTEXT_TELEMETRY_CAN_IDS
+            and target_module_id not in UNKNOWN_MODULE_IDS
+            and not module_has_key
+        ):
             self._io.send_can_frame(can_id, list(raw))
             return
         if self._master_key is None:

@@ -259,8 +259,6 @@ class SecureCanTransport:
         raw = bytes(int(b) & 0xFF for b in data)
         if is_plaintext_bootstrap_tx(can_id, raw):
             return [(can_id, list(raw) + [0] * (8 - len(raw)))]
-        if can_id in PLAINTEXT_TELEMETRY_CAN_IDS:
-            return [(can_id, list(raw) + [0] * (8 - len(raw)))]
         value = encode_can_frame_value(can_id, raw, extended=extended)
         return self.build_secure_segments(
             peer_module_id=target_module_id,
