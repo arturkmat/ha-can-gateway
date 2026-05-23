@@ -212,11 +212,14 @@ class BusManager:
                 "module_count": len(self._modules),
                 "last_scan_status": self._last_scan_status,
                 "last_scan_at": self._last_scan_at,
-                "version": "0.4.2",
+                "version": "0.4.4",
                 "mqtt_enabled": self._options.mqtt_enabled,
             }
 
     def full_state(self) -> dict[str, Any]:
+        if self.bus_ok:
+            self._ensure_transport_macs()
+            self.collect_relay_state_frames(0.15)
         engine = self._get_engine()
         modules = [engine.export_module_dict(rec["module_id"]) for rec in engine.list_modules()]
         if not modules:
@@ -263,9 +266,17 @@ class BusManager:
 
     def collect_relay_state_frames(self, timeout_s: float = 1.0) -> None:
         """Odbierz broadcast 0x600/0x602 — jak konfigurator _collect_relay_state_frames."""
+        self._ensure_transport_macs()
         deadline = time.time() + timeout_s
         while time.time() < deadline:
             self.pump_rx(min(0.05, max(0.0, deadline - time.time())))
+
+    def refresh_relay_telemetry(self, timeout_s: float = 0.6) -> None:
+        """Passive refresh stanów przekaźników (0x600/0x601/0x602)."""
+        if not self.bus_ok:
+            return
+        self._ensure_transport_macs()
+        self.collect_relay_state_frames(timeout_s)
 
     def _relay_controls_from_record(self, rec: ModuleRecord) -> list[dict[str, Any]]:
         reserved: set[int] = set()
@@ -643,7 +654,7 @@ class BusManager:
         message = self._normalize_message(message)
         if message is None:
             return
-        self._get_engine().handle_can_message(message)
+        self._get_engine().handle_can_message(message, already_normalized=True)
 
     def _handle_config_response_legacy(self, rec: ModuleRecord, data: list[int]) -> None:
         cmd = int(data[1])
@@ -929,6 +940,8 @@ class BusManager:
             return {"ok": False, "error": self._bus_error or "bus not open"}
         result = self._get_engine().scan_modules_sync()
         self._sync_transport_macs_from_engine()
+        if result.get("ok"):
+            self.refresh_relay_telemetry(0.8)
         with self._lock:
             self._last_scan_status = "ok" if result.get("ok") else "error"
             if result.get("ok"):

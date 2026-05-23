@@ -281,6 +281,7 @@ async def run_server(
         background.append(asyncio.create_task(_initial_scan(bus)))
     if options.auto_scan:
         background.append(asyncio.create_task(_auto_scan_loop(bus, options.auto_scan_interval_s)))
+    background.append(asyncio.create_task(_relay_telemetry_loop(bus)))
 
     try:
         if shutdown is not None:
@@ -317,6 +318,19 @@ async def _auto_scan_loop(bus: BusManager, interval_s: int) -> None:
         try:
             if bus.bus_ok:
                 await asyncio.to_thread(bus.auto_scan_broadcast)
+                await asyncio.to_thread(bus.refresh_relay_telemetry, 0.6)
         except Exception:  # noqa: BLE001
             _LOGGER.debug("auto-scan broadcast failed", exc_info=True)
         await asyncio.sleep(max(5, interval_s))
+
+
+async def _relay_telemetry_loop(bus: BusManager) -> None:
+    """Co ~20 s nasłuch broadcastów 0x600/0x602 (firmware co 30 s)."""
+    await asyncio.sleep(8)
+    while True:
+        try:
+            if bus.bus_ok:
+                await asyncio.to_thread(bus.refresh_relay_telemetry, 0.75)
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("relay telemetry refresh failed", exc_info=True)
+        await asyncio.sleep(20)

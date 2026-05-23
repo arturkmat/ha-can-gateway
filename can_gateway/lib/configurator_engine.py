@@ -104,6 +104,7 @@ class ModuleContext:
     gpio_info: dict[int, dict[str, Any]] = field(default_factory=dict)
     gpio_values: dict[int, dict[str, Any]] = field(default_factory=dict)
     virtual_relay_values: dict[int, int] = field(default_factory=dict)
+    relay_gpio_by_index: dict[int, int] = field(default_factory=dict)
     relay_pulse_ms_by_index: dict[int, int] = field(default_factory=dict)
     shutter_relay_pairs: dict[int, dict[str, int]] = field(default_factory=dict)
     shutter_states: dict[int, dict[str, int]] = field(default_factory=dict)
@@ -185,26 +186,33 @@ class ConfiguratorEngine:
                         pending_summary_macs.append(module_mac)
                     if self._upsert_discovered(module_id, hw_type=hw_type, module_mac=module_mac):
                         self._io.notify()
+                    if module_mac is not None:
+                        self._io.sync_transport_macs()
                     if module_id not in UNKNOWN_MODULE_IDS:
                         touched_ids.add(module_id)
                     continue
-                if message.arbitration_id != CAN_ID_CONFIG_RESPONSE or len(raw) < 8:
+                if (
+                    message.arbitration_id == CAN_ID_CONFIG_RESPONSE
+                    and len(raw) >= 8
+                    and raw[1] == COMMAND_GET_SUMMARY
+                    and raw[2] == 0
+                ):
+                    module_id = raw[0]
+                    details = self.build_summary_details(raw)
+                    if module_id in UNKNOWN_MODULE_IDS:
+                        if pending_summary_macs:
+                            summary_mac = pending_summary_macs.pop(0)
+                            self._upsert_discovered(module_id, details=details, module_mac=summary_mac)
+                            self._io.sync_transport_macs()
+                        continue
+                    if self._upsert_discovered(module_id, details=details):
+                        self._io.notify()
+                    if len(raw) > 7:
+                        self.context(module_id).hw_flags = int(raw[7])
+                        self._apply_summary_counts(module_id, raw)
+                    touched_ids.add(module_id)
                     continue
-                if raw[1] != COMMAND_GET_SUMMARY or raw[2] != 0:
-                    continue
-                module_id = raw[0]
-                details = self.build_summary_details(raw)
-                if module_id in UNKNOWN_MODULE_IDS:
-                    if pending_summary_macs:
-                        summary_mac = pending_summary_macs.pop(0)
-                        self._upsert_discovered(module_id, details=details, module_mac=summary_mac)
-                    continue
-                if self._upsert_discovered(module_id, details=details):
-                    self._io.notify()
-                if len(raw) > 7:
-                    self.context(module_id).hw_flags = int(raw[7])
-                    self._apply_summary_counts(module_id, raw)
-                touched_ids.add(module_id)
+                self.handle_can_message(message, already_normalized=True)
 
             for module_id in sorted(touched_ids):
                 if module_id in UNKNOWN_MODULE_IDS:
@@ -220,10 +228,9 @@ class ConfiguratorEngine:
                 if build:
                     self.context(module_id).firmware_build = build
 
-            if touched_ids:
-                self.collect_relay_state_frames(0.6)
-
             self._io.sync_transport_macs()
+            if touched_ids:
+                self.refresh_all_module_relay_states(passive_timeout_s=1.5, active=True)
             count = len(self.discovered_modules)
             self._last_scan_status = "ok"
             self._last_scan_at = time.time()
@@ -276,8 +283,11 @@ class ConfiguratorEngine:
             out["sensors"] = detail.get("runtime", {}).get("sensors") or []
         return out
 
-    def handle_can_message(self, message: Any, *, passive_only: bool = False) -> bool:
-        message = self._normalize(message)
+    def handle_can_message(
+        self, message: Any, *, passive_only: bool = False, already_normalized: bool = False
+    ) -> bool:
+        if not already_normalized:
+            message = self._normalize(message)
         if message is None or not message.data:
             return False
         payload = list(message.data)
@@ -320,8 +330,7 @@ class ConfiguratorEngine:
             self._io.notify()
             return True
         if message.arbitration_id == CAN_ID_RELAY_GPIO_MAP and len(payload) >= 3:
-            self._io.notify()
-            return True
+            return self._apply_relay_gpio_map_frame(ctx, payload)
         if message.arbitration_id == CAN_ID_CONFIG_RESPONSE and len(payload) >= 3:
             self._apply_config_response(ctx, payload)
             return True
@@ -372,12 +381,37 @@ class ConfiguratorEngine:
             self._io_release()
 
     def collect_relay_state_frames(self, timeout_s: float = 1.0) -> None:
+        self._io.sync_transport_macs()
         deadline = time.time() + timeout_s
         while time.time() < deadline:
             message = self._safe_recv(min(0.05, max(0.0, deadline - time.time())))
             if message is None:
                 continue
-            self.handle_can_message(message)
+            normalized = self._normalize(message)
+            if normalized is None:
+                continue
+            self.handle_can_message(normalized, already_normalized=True)
+
+    def refresh_all_module_relay_states(
+        self, *, passive_timeout_s: float = 1.2, active: bool = True
+    ) -> None:
+        """Passive 0x600/0x602 (+ active GET_GPIO gdy brak telemetrii)."""
+        self._io.sync_transport_macs()
+        self.collect_relay_state_frames(passive_timeout_s)
+        if not active:
+            return
+        for item in self.discovered_modules:
+            mid = int(item.get("module_id", 0))
+            if mid in UNKNOWN_MODULE_IDS:
+                continue
+            ctx = self.context(mid)
+            if ctx.virtual_relay_values and any(ctx.virtual_relay_values.values()):
+                continue
+            self.set_current_module(mid)
+            if ctx.relay_gpio_by_index:
+                self._read_relay_states_via_gpio_map()
+            elif ctx.gpio_info:
+                self.read_relay_states_from_module()
 
     def relay_pulse_ms_for(self, module_id: int, relay_no: int) -> int:
         ctx = self.context(module_id)
@@ -412,7 +446,7 @@ class ConfiguratorEngine:
         gpio_values = {
             str(k): {"gpio": k, **v} for k, v in ctx.gpio_values.items()
         }
-        relay_gpio_map: dict[int, int] = {}
+        relay_gpio_map: dict[int, int] = dict(ctx.relay_gpio_by_index)
         for gpio, info in ctx.gpio_info.items():
             if info.get("role") == PIN_ROLE_MAP["Relay"]:
                 idx = int(info.get("index", 0))
@@ -679,6 +713,9 @@ class ConfiguratorEngine:
         if mid in UNKNOWN_MODULE_IDS:
             return
         ctx = self.context(mid)
+        if not ctx.gpio_info and ctx.relay_gpio_by_index:
+            self._read_relay_states_via_gpio_map()
+            return
         for gpio, info in ctx.gpio_info.items():
             if info.get("role") != PIN_ROLE_MAP["Relay"]:
                 continue
@@ -840,6 +877,42 @@ class ConfiguratorEngine:
                 "index": relay_index,
             }
             break
+
+    def _read_relay_states_via_gpio_map(self) -> None:
+        mid = self.current_module_id
+        if mid in UNKNOWN_MODULE_IDS:
+            return
+        ctx = self.context(mid)
+        for relay_index, gpio in sorted(ctx.relay_gpio_by_index.items()):
+            if int(relay_index) <= 0 or int(gpio) <= 0:
+                continue
+            resp = self.send_request(
+                mid, COMMAND_GET_GPIO_VALUE, [int(gpio)], timeout=0.15, log_traffic=False
+            )
+            if resp is None or len(resp) < 7 or resp[2] != 0 or resp[6] != 1:
+                continue
+            self._store_relay_state(mid, int(relay_index), int(resp[3]))
+        self.collect_relay_state_frames(0.35)
+
+    def _apply_relay_gpio_map_frame(self, ctx: ModuleContext, payload: list[int]) -> bool:
+        if len(payload) < 3:
+            return False
+        start = int(payload[1])
+        changed = False
+        for offset, gpio_raw in enumerate(payload[2:8]):
+            relay_index = start + offset
+            gpio = int(gpio_raw)
+            if gpio == 0xFF:
+                if relay_index in ctx.relay_gpio_by_index:
+                    del ctx.relay_gpio_by_index[relay_index]
+                    changed = True
+                continue
+            if ctx.relay_gpio_by_index.get(relay_index) != gpio:
+                changed = True
+            ctx.relay_gpio_by_index[relay_index] = gpio
+        if changed:
+            self._io.notify()
+        return changed
 
     def _apply_relays_frame(self, ctx: ModuleContext, payload: list[int]) -> bool:
         if len(payload) < 3:
