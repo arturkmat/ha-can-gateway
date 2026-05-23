@@ -119,8 +119,13 @@ let selectedId = null;
 let modulesCache = [];
 let pinoutCache = null;
 
+function apiUrl(path) {
+  const clean = String(path).replace(/^\//, "");
+  return new URL(clean, window.location.href).toString();
+}
+
 async function api(path, opts) {
-  const res = await fetch(path, opts);
+  const res = await fetch(apiUrl(path), opts);
   const data = await res.json().catch(() => ({}));
   return { res, data };
 }
@@ -139,13 +144,23 @@ function moduleById(id) {
 }
 
 async function loadAll() {
-  const { data } = await api("/api/state");
+  const { res, data } = await api("/api/state");
   document.getElementById("raw-state").textContent = JSON.stringify(data, null, 2);
+  if (!res.ok) {
+    document.getElementById("status-line").innerHTML =
+      `<span class="err">API ${res.status}</span> · sprawdz logi dodatku`;
+    return;
+  }
   const st = data.status || {};
   const bus = st.bus_ok ? '<span class="ok">magistrala OK</span>' : '<span class="err">OFF</span>';
   const mqtt = st.mqtt_enabled ? " · MQTT" : "";
+  const iface = st.can_interface || "?";
+  const port = st.can_port || (st.gsusb_channel != null ? `gs_usb:${st.gsusb_channel}` : "?");
+  const bitrate = st.can_bitrate != null ? `${st.can_bitrate} bps` : "?";
+  const mods = st.module_count != null ? st.module_count : 0;
+  const err = st.bus_error ? ` · <span class="warn" title="${st.bus_error}">blad magistrali</span>` : "";
   document.getElementById("status-line").innerHTML =
-    `${bus} · ${st.can_interface} · ${st.can_port || "gs_usb:" + st.gsusb_channel} · ${st.can_bitrate} bps · moduły: ${st.module_count}${mqtt}`;
+    `${bus}${err} · ${iface} · ${port} · ${bitrate} · moduly: ${mods}${mqtt}`;
   modulesCache = data.modules || [];
   renderModules();
   if (selectedId != null) {
