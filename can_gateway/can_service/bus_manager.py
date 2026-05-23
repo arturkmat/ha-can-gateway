@@ -164,7 +164,7 @@ class BusManager:
                 "module_count": len(self._modules),
                 "last_scan_status": self._last_scan_status,
                 "last_scan_at": self._last_scan_at,
-                "version": "0.3.9",
+                "version": "0.3.10",
                 "mqtt_enabled": self._options.mqtt_enabled,
             }
 

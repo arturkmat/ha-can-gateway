@@ -19,6 +19,7 @@ from .gpio_service import (
     read_relay_pulse_ms,
 )
 from .mqtt_bridge import MqttBridge
+from .options import load_options
 from .tab_load_service import load_module_tab
 
 _LOGGER = logging.getLogger(__name__)
