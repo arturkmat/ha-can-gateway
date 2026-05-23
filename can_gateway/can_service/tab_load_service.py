@@ -12,7 +12,6 @@ from protocol_constants import (
     COMMAND_GET_RELAY_PULSE,
     COMMAND_GET_SHUTTER_RELAYS,
     COMMAND_GET_SUMMARY,
-    COMMAND_SCAN_SENSORS,
     MAX_SHUTTERS,
 )
 
@@ -79,7 +78,8 @@ def _load_gpio_tab(bus: BusManager, module_id: int) -> dict[str, Any]:
     }
 
 
-def _sync_relay_pulses(bus: BusManager, module_id: int, *, only_missing: bool = True) -> None:
+def _sync_relay_pulses(bus: BusManager, module_id: int, *, only_missing: bool = False) -> None:
+    """Jak konfigurator _sync_relay_pulse_cache_for_current_module."""
     detail = bus.module_detail(module_id) or {}
     known = {int(k) for k in ((detail.get("runtime") or {}).get("relay_pulse_ms") or {})}
     for relay_no in sorted(bus.relay_numbers_for_module(module_id)):
@@ -90,13 +90,14 @@ def _sync_relay_pulses(bus: BusManager, module_id: int, *, only_missing: bool = 
 
 
 def _load_control_tab(bus: BusManager, module_id: int) -> dict[str, Any]:
+    """Jak konfigurator _load_control_tab_outputs: role, pulse cache, stany GPIO + broadcast 0x600/602."""
     steps: list[dict[str, Any]] = []
     steps.append(_step("Podsumowanie modulu", lambda: _ensure_summary(bus, module_id)))
+    steps.append(_step("Metadane wyjsc (MCP/HC595)", lambda: bus.ensure_relay_metadata(module_id)))
 
     detail = bus.module_detail(module_id) or {}
     rt = detail.get("runtime") or {}
-    roles = rt.get("gpio_roles") or {}
-    if not roles:
+    if not rt.get("gpio_roles"):
         def _roles() -> None:
             result = read_gpio_roles(bus, module_id)
             if not result.get("ok"):
@@ -104,26 +105,20 @@ def _load_control_tab(bus: BusManager, module_id: int) -> dict[str, Any]:
 
         steps.append(_step("Role GPIO", _roles))
 
-    pulse_map = rt.get("relay_pulse_ms") or {}
-    relay_nums = bus.relay_numbers_for_module(module_id)
-    known_pulse = {int(k) for k in pulse_map}
-    missing_pulse = [rn for rn in relay_nums if int(rn) not in known_pulse]
-    if missing_pulse:
-        steps.append(
-            _step(
-                "Impulsy przekaznikow",
-                lambda: _sync_relay_pulses(bus, module_id, only_missing=True),
-            )
-        )
+    steps.append(_step("Impulsy przekaznikow", lambda: _sync_relay_pulses(bus, module_id, only_missing=False)))
 
-    def _values() -> None:
+    def _values_and_broadcast() -> None:
         read_gpio_values(bus, module_id)
+        bus.collect_relay_state_frames(1.0)
 
-    steps.append(_step("Stany wyjsc", _values))
-    deadline = time.time() + 0.45
-    while time.time() < deadline:
-        bus.pump_rx(0.05)
-    return {"ok": True, "tab": "control", "steps": steps}
+    steps.append(_step("Stany wyjsc (GPIO + 0x600/602)", _values_and_broadcast))
+    detail = bus.module_detail(module_id)
+    return {
+        "ok": all(s.get("ok", False) for s in steps),
+        "tab": "control",
+        "steps": steps,
+        "control_relays": (detail or {}).get("control_relays") or [],
+    }
 
 
 def _load_shutters_tab(bus: BusManager, module_id: int) -> dict[str, Any]:
@@ -136,9 +131,14 @@ def _load_shutters_tab(bus: BusManager, module_id: int) -> dict[str, Any]:
         if shutter_count <= 0:
             return
         for shutter_no in range(1, MAX_SHUTTERS + 1):
-            bus.send_config_and_wait(module_id, COMMAND_GET_SHUTTER_RELAYS, [shutter_no], timeout=0.2)
+            resp = bus.send_config_and_wait(module_id, COMMAND_GET_SHUTTER_RELAYS, [shutter_no], timeout=0.2)
+            if resp is None or len(resp) < 6 or int(resp[2]) != 0:
+                continue
+            ro, rc = int(resp[4]), int(resp[5])
+            if ro <= 0 and rc <= 0:
+                continue
             time.sleep(0.06)
-        bus.pump_rx(0.4)
+        bus.collect_relay_state_frames(0.35)
 
     steps.append(_step("Konfiguracja rolet", _read_shutters))
     return {"ok": True, "tab": "shutters", "steps": steps, "shutter_count": shutter_count}
@@ -153,16 +153,16 @@ def _load_mapping_tab(bus: BusManager, module_id: int) -> dict[str, Any]:
 
 
 def _load_sensors_tab(bus: BusManager, module_id: int) -> dict[str, Any]:
+    """Konfigurator: brak auto-skenu — dane na żywo z ramek 0x400 po wejściu w zakładkę."""
     steps: list[dict[str, Any]] = []
-    bus.clear_sensors(module_id)
+    steps.append(_step("Podsumowanie modulu", lambda: _ensure_summary(bus, module_id)))
 
-    def _scan() -> None:
-        bus.send_config_and_wait(module_id, COMMAND_SCAN_SENSORS, timeout=2.0)
-        deadline = time.time() + 2.5
+    def _listen_live() -> None:
+        deadline = time.time() + 1.5
         while time.time() < deadline:
             bus.pump_rx(0.05)
 
-    steps.append(_step("Skan sensorow", _scan))
+    steps.append(_step("Nasłuch ramek sensor (0x400)", _listen_live))
     detail = bus.module_detail(module_id) or {}
     sensors = list((detail.get("runtime") or {}).get("sensors") or [])
     return {"ok": True, "tab": "sensors", "steps": steps, "sensors": sensors}

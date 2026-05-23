@@ -48,6 +48,7 @@
     <div class="row">
       <button id="btn-scan" type="button">Skan F5</button>
       <button id="btn-refresh" type="button" class="secondary">Odśwież stan</button>
+      <button id="btn-deep-refresh" type="button" class="secondary" disabled>Deep refresh modułu</button>
       <button id="btn-reload-tab" type="button" class="secondary" disabled>Przeładuj zakładkę</button>
       <span class="sub">Moduł: <strong id="sel-id">—</strong></span>
     </div>
@@ -220,6 +221,10 @@ async function loadCurrentTab(force) {
   }
   if (data.mappings) mappingsCache = data.mappings;
   if (data.sensors) sensorsCache = data.sensors;
+  if (data.control_relays?.length && selectedId != null) {
+    const m = moduleById(selectedId);
+    if (m) m.control_relays = data.control_relays;
+  }
   await loadAll(false);
   renderActivePanel();
   setTabLoading(false);
@@ -264,7 +269,7 @@ function renderActivePanel() {
 
 function updateButtons() {
   const has = selectedId != null;
-  ["btn-reboot","btn-ota-read","btn-gpio-clear","btn-reload-tab"].forEach(id => {
+  ["btn-reboot","btn-ota-read","btn-gpio-clear","btn-reload-tab","btn-deep-refresh"].forEach(id => {
     document.getElementById(id).disabled = !has || tabLoading;
   });
 }
@@ -306,9 +311,9 @@ function shutterRelaySet(m) {
 function renderControl(id) {
   const m = moduleById(id);
   if (!m) return;
-  const rt = m.runtime || {};
-  const relays = rt.relays || [];
-  const reserved = shutterRelaySet(m);
+  const relays = (m.control_relays && m.control_relays.length)
+    ? m.control_relays
+    : (m.runtime?.relays || []);
   const rb = document.getElementById("relays-box");
   if (!relays.length) {
     rb.innerHTML = "<span class='sub'>Brak danych — przeładuj zakładkę Sterowanie</span>";
@@ -316,18 +321,20 @@ function renderControl(id) {
   }
   rb.innerHTML = "";
   for (const r of relays) {
-    if (reserved.has(r.relay_no)) continue;
+    if (r.shutter_reserved) continue;
     const wrap = document.createElement("div");
     wrap.style.marginBottom = "0.55rem";
-    wrap.innerHTML = `<span class="pill">R${r.relay_no}</span> ${r.on ? "ON" : "OFF"} pulse=${r.pulse_ms || 0}ms<br>`;
+    const pulse = r.pulse_ms || 0;
+    const pulseHint = pulse > 0 ? ` <span class="warn">[impuls ${pulse}ms]</span>` : "";
+    wrap.innerHTML = `<span class="pill">R${r.relay_no}</span> ${r.on ? "ON" : "OFF"}${pulseHint}<br>`;
     ["on","off","toggle"].forEach(st => {
       const b = document.createElement("button");
       b.textContent = st.toUpperCase(); b.className = "relay-btn secondary";
-      b.onclick = () => setRelay(id, r.relay_no, st);
+      b.onclick = () => setRelay(id, r.relay_no, st, pulse);
       wrap.appendChild(b);
     });
     const inp = document.createElement("input");
-    inp.type = "number"; inp.min = 0; inp.max = 65535; inp.value = r.pulse_ms || 0;
+    inp.type = "number"; inp.min = 0; inp.max = 65535; inp.value = pulse;
     const save = document.createElement("button");
     save.textContent = "Zapisz impuls ms"; save.className = "relay-btn secondary";
     save.onclick = () => setPulse(id, r.relay_no, inp.value);
@@ -433,7 +440,7 @@ function renderGpioTable() {
   }
 }
 
-async function setRelay(mid, relayNo, state) {
+async function setRelay(mid, relayNo, state, pulseMs = 0) {
   const { res, data } = await api(`/api/modules/${mid}/relays/${relayNo}`, {
     method: "POST",
     headers: {"Content-Type":"application/json"},
@@ -446,9 +453,17 @@ async function setRelay(mid, relayNo, state) {
       m.runtime.relays = m.runtime.relays || [];
       let row = m.runtime.relays.find(r => r.relay_no === relayNo);
       if (row) row.on = data.on;
-      else m.runtime.relays.push({ relay_no: relayNo, on: data.on, pulse_ms: 0, source: "local" });
+      else m.runtime.relays.push({ relay_no: relayNo, on: data.on, pulse_ms: pulseMs, source: "local" });
+      m.control_relays = m.control_relays || [];
+      let crow = m.control_relays.find(r => r.relay_no === relayNo);
+      if (crow) crow.on = data.on;
+      else m.control_relays.push({ relay_no: relayNo, on: data.on, pulse_ms: pulseMs, shutter_reserved: false });
     }
     renderControl(mid);
+    const pm = Number(data.pulse_ms || pulseMs || 0);
+    if (pm > 0 && data.on && (state === "on" || state === "toggle")) {
+      setTimeout(() => loadAll(false).then(() => renderControl(mid)), pm + 120);
+    }
     return;
   }
   await loadAll(false);
@@ -469,11 +484,23 @@ async function assignGpio(gpio, role, index) {
 }
 
 document.getElementById("btn-refresh").onclick = () => loadAll(true);
-document.getElementById("btn-reload-tab").onclick = () => loadCurrentTab(true);
+document.getElementById("btn-deep-refresh").onclick = async () => {
+  if (selectedId == null) return;
+  document.getElementById("btn-deep-refresh").disabled = true;
+  appendLog(`[deep-refresh] modul ID=${selectedId}...`);
+  const { res, data } = await api(`/api/modules/${selectedId}/refresh`, { method: "POST" });
+  appendLog(res.ok ? "[deep-refresh] OK" : `[deep-refresh] blad: ${data.error || res.status}`);
+  loadedTabs = new Set();
+  await loadAll(true);
+  await loadCurrentTab(true);
+  document.getElementById("btn-deep-refresh").disabled = false;
+};
+document.getElementById("btn-reload-tab").onclick = () => { loadedTabs.delete(`${selectedId}:${currentTab}`); loadCurrentTab(true); };
 document.getElementById("btn-scan").onclick = async () => {
   document.getElementById("btn-scan").disabled = true;
   appendLog("Skan F5...");
   await api("/api/scan", { method: "POST" });
+  loadedTabs = new Set();
   await loadAll(true);
   document.getElementById("btn-scan").disabled = false;
 };

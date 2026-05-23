@@ -26,6 +26,7 @@ from protocol_constants import (
     COMMAND_GET_SHUTTER_RELAYS,
     COMMAND_GET_SUMMARY,
     COMMAND_REBOOT_MODULE,
+    COMMAND_SCAN_MCP23017,
     COMMAND_SET_RELAY_STATE,
     HW_TYPE_NAME_MAP,
     MCP23017_RELAY_CAN_BASE,
@@ -113,6 +114,7 @@ class BusManager:
         self._scan_lock = threading.Lock()
         self._reconnect_thread: threading.Thread | None = None
         self._active_port: str | None = None
+        self._pulse_timers: dict[tuple[int, int], threading.Timer] = {}
 
     def start(self) -> None:
         master = self._options.master_key_bytes
@@ -164,18 +166,20 @@ class BusManager:
                 "module_count": len(self._modules),
                 "last_scan_status": self._last_scan_status,
                 "last_scan_at": self._last_scan_at,
-                "version": "0.3.12",
+                "version": "0.3.13",
                 "mqtt_enabled": self._options.mqtt_enabled,
             }
 
     def full_state(self) -> dict[str, Any]:
         with self._lock:
+            modules = []
+            for rec in sorted(self._modules.values(), key=lambda r: r.module_id):
+                row = rec.to_dict(include_runtime=True)
+                row["control_relays"] = self._relay_controls_from_record(rec)
+                modules.append(row)
             return {
                 "status": self.status(),
-                "modules": [
-                    rec.to_dict(include_runtime=True)
-                    for rec in sorted(self._modules.values(), key=lambda r: r.module_id)
-                ],
+                "modules": modules,
             }
 
     def list_modules(self) -> list[dict[str, Any]]:
@@ -187,7 +191,124 @@ class BusManager:
             rec = self._modules.get(int(module_id))
             if rec is None:
                 return None
-            return rec.to_dict(include_runtime=True)
+            out = rec.to_dict(include_runtime=True)
+            out["control_relays"] = self._relay_controls_from_record(rec)
+            return out
+
+    def shutter_reserved_relays(self, module_id: int) -> set[int]:
+        with self._lock:
+            rec = self._modules.get(int(module_id))
+            if rec is None:
+                return set()
+            reserved: set[int] = set()
+            for ro, rc in rec.runtime.shutter_map.values():
+                if ro > 0:
+                    reserved.add(int(ro))
+                if rc > 0:
+                    reserved.add(int(rc))
+            return reserved
+
+    def collect_relay_state_frames(self, timeout_s: float = 1.0) -> None:
+        """Odbierz broadcast 0x600/0x602 — jak konfigurator _collect_relay_state_frames."""
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            self.pump_rx(min(0.05, max(0.0, deadline - time.time())))
+
+    def _relay_controls_from_record(self, rec: ModuleRecord) -> list[dict[str, Any]]:
+        reserved: set[int] = set()
+        for ro, rc in rec.runtime.shutter_map.values():
+            if ro > 0:
+                reserved.add(int(ro))
+            if rc > 0:
+                reserved.add(int(rc))
+        nums: set[int] = set()
+        for rn, gpio in rec.runtime.relay_gpio_map.items():
+            if 1 <= rn <= MAX_LOCAL_RELAYS and gpio != 255:
+                nums.add(int(rn))
+        regs = (rec.runtime.hw_flags >> 4) & 0x07
+        if regs > 0:
+            nums.update(
+                range(
+                    SHIFT595_RELAY_BASE_INDEX,
+                    SHIFT595_RELAY_BASE_INDEX + regs * SHIFT595_RELAY_COUNT_PER_REGISTER,
+                )
+            )
+        for chip, pins in rec.runtime.mcp_relay_pins.items():
+            for lp in pins:
+                nums.add(MCP23017_RELAY_CAN_BASE + int(chip) * 16 + int(lp))
+        nums.update(rec.runtime.relays.keys())
+        nums.difference_update(reserved)
+        if not nums:
+            nums = set(range(1, MAX_LOCAL_RELAYS + 1))
+        state_by_no = {int(st.relay_no): st for st in rec.runtime.relays.values()}
+        out: list[dict[str, Any]] = []
+        for rn in sorted(nums):
+            st = state_by_no.get(rn)
+            pulse = rec.runtime.relay_pulse_ms.get(rn, 0)
+            if st is not None and st.pulse_ms:
+                pulse = st.pulse_ms
+            out.append(
+                {
+                    "relay_no": rn,
+                    "on": bool(st.on) if st is not None else False,
+                    "pulse_ms": int(pulse),
+                    "source": st.source if st is not None else "local",
+                    "shutter_reserved": rn in reserved,
+                }
+            )
+        return out
+
+    def relay_pulse_ms_for(self, module_id: int, relay_no: int) -> int:
+        with self._lock:
+            rec = self._modules.get(int(module_id))
+            if rec is None:
+                return 0
+            rn = int(relay_no)
+            st = rec.runtime.relays.get(rn)
+            if st is not None and st.pulse_ms > 0:
+                return int(st.pulse_ms)
+            return int(rec.runtime.relay_pulse_ms.get(rn, 0))
+
+    def _schedule_pulse_resync(self, module_id: int, relay_no: int, pulse_ms: int) -> None:
+        key = (int(module_id), int(relay_no))
+        old = self._pulse_timers.pop(key, None)
+        if old is not None:
+            old.cancel()
+
+        def _resync() -> None:
+            self._pulse_timers.pop(key, None)
+            if not self._begin_command_io(blocking=True, timeout=2.0):
+                return
+            try:
+                self.collect_relay_state_frames(0.45)
+                self.store_relay_state(module_id, relay_no, False)
+            finally:
+                self._end_command_io()
+
+        delay_s = max(0.05, (int(pulse_ms) + 80) / 1000.0)
+        timer = threading.Timer(delay_s, _resync)
+        timer.daemon = True
+        self._pulse_timers[key] = timer
+        timer.start()
+
+    def ensure_relay_metadata(self, module_id: int) -> None:
+        """Summary + MCP23017 role dump — potrzebne do listy wyjść HC595/MCP."""
+        mid = int(module_id)
+        detail = self.module_detail(mid)
+        if detail and not detail.get("summary_details"):
+            self.send_config_and_wait(mid, COMMAND_GET_SUMMARY, timeout=0.6)
+            time.sleep(0.1)
+        with self._lock:
+            rec = self._modules.get(mid)
+            if rec is None:
+                return
+            need_mcp = not rec.runtime.mcp_relay_pins
+        if need_mcp:
+            self.send_config_and_wait(mid, COMMAND_SCAN_MCP23017, timeout=1.5)
+            time.sleep(0.1)
+            for chip in range(8):
+                self.send_config_and_wait(mid, COMMAND_GET_MCP23017_ROLE_DUMP, [chip], timeout=0.25)
+                time.sleep(0.055)
 
     def relay_numbers_for_module(self, module_id: int) -> set[int]:
         with self._lock:
@@ -758,6 +879,16 @@ class BusManager:
             return {"ok": False, "error": "invalid state"}
         mid = int(module_id)
         rn = int(relay_no)
+        if rn in self.shutter_reserved_relays(mid):
+            return {
+                "ok": False,
+                "error": "relay assigned to shutter",
+                "module_id": mid,
+                "relay_no": rn,
+            }
+        pulse_ms = self.relay_pulse_ms_for(mid, rn)
+        if pulse_ms > 0 and code == 2:
+            code = 1
         if not self._begin_command_io(blocking=True, timeout=3.0):
             return {"ok": False, "error": "bus busy (scan/tab-load in progress)", "module_id": mid, "relay_no": rn}
         try:
@@ -775,12 +906,16 @@ class BusManager:
             else:
                 row = self._relay_cache_row(mid, rn)
                 if row is None:
-                    self.pump_rx(0.12)
+                    self.collect_relay_state_frames(0.12)
                     row = self._relay_cache_row(mid, rn)
                 if row is None:
                     return {"ok": False, "error": "no response", "module_id": mid, "relay_no": rn}
                 is_on = bool(row.get("on"))
-            return {"ok": True, "module_id": mid, "relay_no": rn, "state": state, "on": is_on}
+            if pulse_ms > 0 and code == 1 and is_on:
+                self._schedule_pulse_resync(mid, rn, pulse_ms)
+            elif code in (0, 1):
+                self.collect_relay_state_frames(0.15)
+            return {"ok": True, "module_id": mid, "relay_no": rn, "state": state, "on": is_on, "pulse_ms": pulse_ms}
         finally:
             self._end_command_io()
 
