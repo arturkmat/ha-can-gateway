@@ -164,7 +164,7 @@ class BusManager:
                 "module_count": len(self._modules),
                 "last_scan_status": self._last_scan_status,
                 "last_scan_at": self._last_scan_at,
-                "version": "0.3.10",
+                "version": "0.3.11",
                 "mqtt_enabled": self._options.mqtt_enabled,
             }
 
@@ -520,6 +520,9 @@ class BusManager:
             rec.runtime.relay_pulse_ms[rn] = pulse
             st = rec.runtime.relays.setdefault(rn, RelayState(relay_no=rn))
             st.pulse_ms = pulse
+        elif cmd == COMMAND_SET_RELAY_STATE and len(data) >= 5:
+            self.store_relay_state(rec.module_id, int(data[3]), bool(int(data[4])))
+            return
         elif cmd == COMMAND_GET_BUTTON_TIMING and len(data) >= 5:
             rec.runtime.button_timing = {
                 "multiclick_ms": int(data[3]) * 10,
@@ -602,6 +605,21 @@ class BusManager:
             rec.runtime.relay_pulse_ms[int(relay_no)] = int(pulse_ms)
             st = rec.runtime.relays.setdefault(int(relay_no), RelayState(relay_no=int(relay_no)))
             st.pulse_ms = int(pulse_ms)
+            self._notify()
+
+    def store_relay_state(self, module_id: int, relay_no: int, is_on: bool) -> None:
+        """Aktualizuj cache stanu przekaźnika (odpowiedź SET_RELAY / GPIO / broadcast 0x600)."""
+        with self._lock:
+            rec = self._get_module(int(module_id))
+            if rec is None:
+                return
+            rn = int(relay_no)
+            st = rec.runtime.relays.setdefault(rn, RelayState(relay_no=rn))
+            st.on = bool(is_on)
+            if rn >= MCP23017_RELAY_CAN_BASE:
+                st.source = "mcp23017"
+            else:
+                st.source = "local"
             self._notify()
 
     def store_button_timing(self, module_id: int, multiclick_ms: int, longpress_ms: int) -> None:
@@ -721,12 +739,41 @@ class BusManager:
         code = state_map.get(str(state).lower())
         if code is None:
             return {"ok": False, "error": "invalid state"}
-        ok = self.send_config(int(module_id), COMMAND_SET_RELAY_STATE, [int(relay_no), code])
-        if ok:
-            deadline = time.time() + 1.0
+        mid = int(module_id)
+        rn = int(relay_no)
+        resp = self.send_config_and_wait(mid, COMMAND_SET_RELAY_STATE, [rn, code], timeout=0.6)
+        if resp is not None and len(resp) >= 5 and int(resp[2]) == 0:
+            self.store_relay_state(mid, rn, bool(int(resp[4])))
+        elif resp is not None and len(resp) >= 3 and int(resp[2]) != 0:
+            return {
+                "ok": False,
+                "error": f"status={int(resp[2])}",
+                "module_id": mid,
+                "relay_no": rn,
+            }
+        else:
+            deadline = time.time() + 0.6
             while time.time() < deadline:
                 self.pump_rx(0.05)
-        return {"ok": ok, "module_id": module_id, "relay_no": relay_no, "state": state}
+            detail = self.module_detail(mid)
+            relays = (detail or {}).get("runtime", {}).get("relays") or []
+            cached = next((r for r in relays if int(r.get("relay_no", -1)) == rn), None)
+            if cached is None:
+                return {"ok": False, "error": "no response", "module_id": mid, "relay_no": rn}
+        deadline = time.time() + 0.5
+        while time.time() < deadline:
+            self.pump_rx(0.05)
+        detail = self.module_detail(mid)
+        relays = (detail or {}).get("runtime", {}).get("relays") or []
+        row = next((r for r in relays if int(r.get("relay_no", -1)) == rn), None)
+        is_on = bool(row.get("on")) if row else None
+        return {
+            "ok": True,
+            "module_id": mid,
+            "relay_no": rn,
+            "state": state,
+            "on": is_on,
+        }
 
     def set_shutter_command(
         self,

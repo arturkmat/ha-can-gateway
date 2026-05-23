@@ -186,6 +186,9 @@ def read_gpio_values(bus: BusManager, module_id: int) -> dict[str, Any]:
             "raw": int(resp[4]),
             "role": int(resp[5]),
         }
+        relay_index = int(role_info.get("index", 0))
+        if int(role_info.get("role", PIN_ROLE_MAP["Unused"])) == PIN_ROLE_MAP["Relay"] and relay_index > 0:
+            bus.store_relay_state(module_id, relay_index, bool(int(resp[3])))
         time.sleep(0.03)
 
     bus.store_gpio_values(module_id, values)
