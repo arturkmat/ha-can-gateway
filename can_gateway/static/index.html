@@ -3,142 +3,31 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CAN Gateway</title>
-  <style>
-    :root {
-      font-family: "Segoe UI", system-ui, sans-serif;
-      color: #e8e8e8;
-      background: #121212;
-      --footer-h: 28px;
-      --progress-h: 32px;
-    }
-    body {
-      max-width: 1240px;
-      margin: 0 auto;
-      padding: 1rem 1.25rem calc(var(--footer-h) + 1.25rem);
-    }
-    h1 { font-size: 1.35rem; margin: 0 0 0.25rem; }
-    h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
-    .sub { color: #9aa0a6; font-size: 0.9rem; margin-bottom: 0.75rem; }
-
-    /* Pasek postępu — jak konfigurator (ttk Progressbar + etykieta) */
-    .progress-row {
-      display: flex;
-      align-items: center;
-      gap: 0.65rem;
-      margin-bottom: 0.5rem;
-      min-height: var(--progress-h);
-    }
-    .progress-label {
-      flex: 0 0 14rem;
-      max-width: 40%;
-      font-size: 0.82rem;
-      color: #9aa0a6;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .progress-track {
-      flex: 1;
-      height: 14px;
-      background: #2a2a2a;
-      border-radius: 4px;
-      overflow: hidden;
-      border: 1px solid #3a3a3a;
-    }
-    .progress-fill {
-      height: 100%;
-      width: 0%;
-      background: linear-gradient(90deg, #15803d, #22c55e);
-      transition: width 0.25s ease;
-      border-radius: 3px;
-    }
-
-    /* Baner MASTER_KEY — jak _config_lock_banner_frame */
-    .lock-banner {
-      display: none;
-      background: #fef3c7;
-      color: #92400e;
-      font-size: 0.88rem;
-      font-weight: 600;
-      padding: 0.45rem 0.75rem;
-      border-radius: 6px;
-      margin-bottom: 0.5rem;
-      border: 1px solid #fcd34d;
-    }
-    .lock-banner.visible { display: block; }
-
-    /* Stopka — jak footer_bar bg #1f2937 */
-    .footer-bar {
-      position: fixed;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      height: var(--footer-h);
-      background: #1f2937;
-      color: #d1d5db;
-      font-size: 0.75rem;
-      display: flex;
-      align-items: center;
-      padding: 0 12px;
-      z-index: 100;
-      border-top: 1px solid #374151;
-    }
-    .footer-bar span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-    .tabs { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
-    .tabs button {
-      background: #333; color: #ddd; border: 1px solid #444;
-      padding: 0.4rem 0.75rem; border-radius: 6px; cursor: pointer; font-size: 0.82rem;
-    }
-    .tabs button.active { background: #0288d1; color: #fff; border-color: #0288d1; }
-    .panel { display: none; }
-    .panel.active { display: block; }
-    .row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem; align-items: center; }
-    .card { background: #1e1e1e; border-radius: 10px; padding: 1rem; margin-bottom: 1rem; border: 1px solid #333; }
-    button, select, input { font: inherit; }
-    button { background: #0288d1; color: #fff; border: none; padding: 0.45rem 0.9rem; border-radius: 6px; cursor: pointer; }
-    button.secondary { background: #444; }
-    button.danger { background: #c62828; }
-    button:disabled { opacity: 0.5; cursor: wait; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-    th, td { text-align: left; padding: 0.35rem 0.45rem; border-bottom: 1px solid #333; vertical-align: top; }
-    tr.selected { background: #263238; cursor: pointer; }
-    tr.reserved { opacity: 0.55; }
-    .ok { color: #81c784; } .err { color: #ef9a9a; } .warn { color: #ffb74d; }
-    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-    @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } .progress-label { flex: 0 0 8rem; } }
-    .pill { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 999px; background: #333; font-size: 0.75rem; margin-right: 0.25rem; }
-    .relay-btn { margin: 0.15rem; padding: 0.25rem 0.5rem; font-size: 0.8rem; }
-    pre { background: #0d0d0d; padding: 0.75rem; border-radius: 6px; overflow: auto; font-size: 0.75rem; max-height: 320px; white-space: pre-wrap; }
-    .hint { font-size: 0.82rem; color: #9aa0a6; margin: 0.5rem 0; }
-    input[type=number] { width: 5rem; padding: 0.3rem; border-radius: 4px; border: 1px solid #444; background: #111; color: #eee; }
-    select { padding: 0.3rem; border-radius: 4px; border: 1px solid #444; background: #111; color: #eee; }
-  </style>
+  <title>CAN Gateway — Konfigurator</title>
+  <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
   <h1>Konfigurator relacji CAN</h1>
-  <p class="sub">CAN Gateway — ten sam układ co konfigurator Windows (F5 = skan, lazy-load zakładek).</p>
+  <p class="sub">CAN Gateway — pełna parytet z konfiguratorem Windows (F5 = skan, encje HA z add-onu).</p>
 
   <div class="progress-row">
     <div id="progress-label" class="progress-label">Gotowy</div>
     <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
   </div>
-
   <div id="lock-banner" class="lock-banner"></div>
 
-  <div class="card">
-    <div class="row">
-      <button id="btn-scan" type="button">Skan F5</button>
-      <button id="btn-refresh" type="button" class="secondary">Odśwież stan</button>
-      <button id="btn-deep-refresh" type="button" class="secondary" disabled>Deep refresh modułu</button>
-      <button id="btn-reload-tab" type="button" class="secondary" disabled>Przeładuj zakładkę</button>
-    </div>
+  <div class="card toolbar">
+    <button id="btn-scan" type="button">Skan F5</button>
+    <button id="btn-refresh" type="button" class="secondary">Odśwież</button>
+    <button id="btn-deep-refresh" type="button" class="secondary" disabled>Deep refresh</button>
+    <button id="btn-reload-tab" type="button" class="secondary" disabled>Przeładuj zakładkę</button>
+    <button id="btn-service" type="button" class="secondary" disabled>⚙ Serwis</button>
   </div>
 
   <div class="tabs">
-    <button type="button" class="tab active" data-tab="modules">2 • Moduły CAN</button>
-    <button type="button" class="tab" data-tab="gpio">3 • GPIO / Pinout</button>
+    <button type="button" class="tab active" data-tab="connection">1 • Połączenie</button>
+    <button type="button" class="tab" data-tab="modules">2 • Moduły</button>
+    <button type="button" class="tab" data-tab="gpio">3 • GPIO</button>
     <button type="button" class="tab" data-tab="control">4 • Sterowanie</button>
     <button type="button" class="tab" data-tab="shutters">5 • Rolety</button>
     <button type="button" class="tab" data-tab="mapping">6 • Mapowanie</button>
@@ -146,48 +35,84 @@
     <button type="button" class="tab" data-tab="logs">8 • Logi</button>
   </div>
 
-  <div id="panel-modules" class="panel active">
+  <div id="panel-connection" class="panel active">
+    <div class="card">
+      <h2>Połączenie magistrali</h2>
+      <p class="hint">Adapter i MASTER_KEY konfigurujesz w ustawieniach add-onu HA. Tu widać stan na żywo.</p>
+      <table><tbody id="conn-status"></tbody></table>
+    </div>
+    <div class="card">
+      <h2>Ustaw ID po MAC</h2>
+      <div class="row">
+        <input id="set-id-mac" placeholder="MAC (AA:BB:…)" />
+        <input id="set-id-new" type="number" min="1" max="254" placeholder="Nowe ID" />
+        <button id="btn-set-module-id" type="button">Ustaw ID</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="panel-modules" class="panel">
     <div class="card">
       <table>
-        <thead><tr><th>ID</th><th>Nazwa</th><th>HW</th><th>MAC</th><th>Przyciski/Relays/Rolety</th></tr></thead>
+        <thead><tr><th>ID</th><th>Nazwa</th><th>HW</th><th>MAC</th><th>KEY</th><th>Podsumowanie</th></tr></thead>
         <tbody id="modules-body"></tbody>
       </table>
-      <div class="row" style="margin-top:0.75rem">
-        <button id="btn-reboot" type="button" class="danger" disabled>Restart modułu</button>
+      <div class="row">
+        <button id="btn-rename" type="button" class="secondary" disabled>Zmień nazwę</button>
+        <button id="btn-identify" type="button" class="secondary" disabled>Identify</button>
+        <button id="btn-reboot" type="button" class="danger" disabled>Restart</button>
         <button id="btn-ota-read" type="button" class="secondary" disabled>OTA info</button>
       </div>
-      <pre id="ota-box" style="margin-top:0.5rem;display:none"></pre>
+      <div class="row ota-row">
+        <input id="ota-file" type="file" accept=".bin" />
+        <button id="btn-ota-upload" type="button" class="secondary" disabled>Wgraj OTA</button>
+      </div>
+      <pre id="ota-box" class="ota-box" style="display:none"></pre>
     </div>
   </div>
 
   <div id="panel-gpio" class="panel">
-    <div class="card">
-      <p id="pinout-hint" class="hint">Wybierz moduł — zakładka załaduje role GPIO i czasy przycisków (jak konfigurator).</p>
-      <p id="button-timing" class="hint"></p>
-      <div class="row">
-        <button id="btn-gpio-clear" type="button" class="danger" disabled>Wyczyść mapowanie GPIO</button>
+    <div class="card grid2">
+      <div>
+        <p id="pinout-hint" class="hint">Wybierz moduł.</p>
+        <div id="pinout-canvas" class="pinout-canvas"></div>
       </div>
+      <div>
+        <h2>Czasy przycisków</h2>
+        <div class="row">
+          <label>MultiClick ms <input id="multiclick-ms" type="number" min="100" max="2000" /></label>
+          <label>LongPress ms <input id="longpress-ms" type="number" min="300" max="2550" /></label>
+          <button id="btn-save-timing" type="button" class="secondary">Zapisz</button>
+        </div>
+        <p class="hint">GPIO focus: <input id="gpio-focus" type="number" readonly /></p>
+        <button id="btn-gpio-clear" type="button" class="danger" disabled>Wyczyść wszystkie GPIO</button>
+      </div>
+    </div>
+    <div class="card">
       <table>
-        <thead><tr><th>GPIO</th><th>Rola</th><th>Index</th><th>Stan</th><th>Przypisz</th></tr></thead>
+        <thead><tr><th>GPIO</th><th>Rola</th><th>Idx</th><th>Stan</th><th>Przypisz (role/idx/flags)</th><th></th></tr></thead>
         <tbody id="gpio-body"></tbody>
       </table>
     </div>
   </div>
 
   <div id="panel-control" class="panel">
-    <div class="card">
-      <h2>Przekaźniki</h2>
-      <p class="hint">Zakładka ładuje listę wyjść, impulsy i stany (GET_SUMMARY + GPIO + pulse). Wyjścia rolet są zablokowane.</p>
-      <div id="relays-box"></div>
-    </div>
+    <div class="card"><h2>Przekaźniki</h2><div id="relays-box"></div></div>
   </div>
 
   <div id="panel-shutters" class="panel">
     <div class="card">
-      <h2>Rolety</h2>
-      <p class="hint">Odczyt par przekaźników rolet (GET_SHUTTER_RELAYS) — jak zakładka Rolety w konfiguratorze.</p>
+      <h2>Konfiguracja rolet</h2>
+      <div class="row">
+        <label>Slot <input id="shutter-slot" type="number" min="1" max="8" value="1" /></label>
+        <label>Relay OPEN <input id="shutter-open-relay" type="number" min="0" /></label>
+        <label>Relay CLOSE <input id="shutter-close-relay" type="number" min="0" /></label>
+        <label>Czas otw. [s] <input id="shutter-open-s" type="number" step="0.1" /></label>
+        <label>Czas zam. [s] <input id="shutter-close-s" type="number" step="0.1" /></label>
+        <button id="btn-save-shutter-cfg" type="button">Zapisz parę</button>
+      </div>
       <table>
-        <thead><tr><th>Roleta</th><th>Open relay</th><th>Close relay</th><th>Pozycja</th><th>Sterowanie</th></tr></thead>
+        <thead><tr><th>Roleta</th><th>Open</th><th>Close</th><th>Poz.</th><th>Sterowanie</th><th>Pozycja %</th></tr></thead>
         <tbody id="shutters-body"></tbody>
       </table>
     </div>
@@ -195,10 +120,21 @@
 
   <div id="panel-mapping" class="panel">
     <div class="card">
-      <h2>Mapowanie przycisków / tras</h2>
-      <p class="hint">Odczyt bindingów lokalnych i z innych modułów (GET_BINDING*, relay/shutter/sensor routes).</p>
+      <h2>Dodaj mapowanie</h2>
+      <div class="row">
+        <input id="map-btn" type="number" min="1" placeholder="Przycisk #" />
+        <select id="map-action"></select>
+        <input id="map-target-id" type="number" placeholder="Moduł docel." />
+        <input id="map-relay" type="number" placeholder="Relay #" />
+        <select id="map-state"></select>
+        <button id="btn-mapping-add" type="button" class="secondary">Dodaj do listy</button>
+      </div>
+      <div class="row">
+        <button id="btn-mapping-send" type="button" disabled>Wyślij do modułu</button>
+        <button id="btn-mapping-clear" type="button" class="danger" disabled>Wyczyść wszystko</button>
+      </div>
       <table>
-        <thead><tr><th>Przycisk/źródło</th><th>Akcja</th><th>Odbiorca</th><th>ID modułu</th><th>Typ</th><th>Cel</th><th>Stan</th></tr></thead>
+        <thead><tr><th>Przycisk</th><th>Akcja</th><th>Odbiorca</th><th>Moduł</th><th>Typ</th><th>Cel</th><th>Stan</th></tr></thead>
         <tbody id="mapping-body"></tbody>
       </table>
     </div>
@@ -206,10 +142,14 @@
 
   <div id="panel-sensors" class="panel">
     <div class="card">
-      <h2>Sensory</h2>
-      <p class="hint">Skan sensorów (CMD 40) — dane na żywo po załadowaniu zakładki.</p>
+      <div class="row">
+        <button id="btn-scan-1wire" type="button" class="secondary">Skan 1-Wire</button>
+        <button id="btn-scan-i2c" type="button" class="secondary">Skan I2C</button>
+        <button id="btn-scan-sensors" type="button" class="secondary">Skan sensorów</button>
+        <button id="btn-scan-mcp" type="button" class="secondary">Skan MCP23017</button>
+      </div>
       <table>
-        <thead><tr><th>#</th><th>Typ</th><th>Dane (hex)</th></tr></thead>
+        <thead><tr><th>#</th><th>Typ</th><th>Dane</th></tr></thead>
         <tbody id="sensors-body"></tbody>
       </table>
     </div>
@@ -217,524 +157,30 @@
 
   <div id="panel-logs" class="panel">
     <div class="card">
-      <div class="row">
-        <button id="btn-clear-log" type="button" class="secondary">Wyczyść log</button>
-      </div>
+      <button id="btn-clear-log" type="button" class="secondary">Wyczyść</button>
       <pre id="log-box"></pre>
     </div>
   </div>
 
+  <div id="service-modal" class="modal">
+    <div class="modal-inner card">
+      <h2>Panel serwisowy — moduł <span id="svc-module-id">?</span></h2>
+      <p id="svc-key-status" class="hint">…</p>
+      <label>MASTER_KEY hex (64 zn., puste = z add-onu)
+        <input id="svc-master-key" type="password" placeholder="64 znaki hex" />
+      </label>
+      <div class="row">
+        <button id="btn-provision-key" type="button">Wyślij MASTER_KEY</button>
+        <button id="btn-service-close" type="button" class="secondary">Zamknij</button>
+      </div>
+    </div>
+  </div>
+
   <footer class="footer-bar"><span id="footer-status">Ładowanie…</span></footer>
-
-<script>
-const ROLES = ["Unused","Button","Relay","DS18B20","BinarySensor","I2C_SDA","I2C_SCL","HC595","SHUTTER_UP","SHUTTER_DOWN","MCP23017","NTC"];
-const SENSOR_TYPES = {1:"DS18B20",2:"I2C",3:"SHT30",4:"BME280",5:"NTC",6:"Binary"};
-let selectedId = null;
-let modulesCache = [];
-let pinoutCache = null;
-let currentTab = "modules";
-let tabLoadTimer = null;
-let tabLoading = false;
-let mappingsCache = [];
-let sensorsCache = [];
-let footerConnectionText = "Magistrala: …";
-let footerScanText = "Brak skanu";
-let progressTaskToken = 0;
-let guiRefreshInProgress = false;
-let lastStatus = {};
-
-function progressShow(text, value) {
-  document.getElementById("progress-label").textContent = text;
-  const pct = Math.max(0, Math.min(100, Number(value) || 0));
-  document.getElementById("progress-fill").style.width = pct + "%";
-}
-
-function progressIdle() {
-  progressShow("Gotowy", 0);
-}
-
-function updateFooter(connection, scan) {
-  if (connection !== undefined) footerConnectionText = connection;
-  if (scan !== undefined) footerScanText = scan;
-  document.getElementById("footer-status").textContent =
-    `${footerConnectionText} | ${footerScanText}`;
-}
-
-function updateLockBanner() {
-  const banner = document.getElementById("lock-banner");
-  if (selectedId == null) {
-    banner.classList.remove("visible");
-    return;
-  }
-  const m = moduleById(selectedId);
-  if (m?.key_mismatch) {
-    banner.textContent =
-      `Moduł ID=${selectedId} — niezgodny MASTER_KEY. Konfiguracja i komunikacja są wyłączone. Napraw klucz w panelu serwisowym dodatku.`;
-    banner.classList.add("visible");
-  } else {
-    banner.classList.remove("visible");
-  }
-}
-
-function connectionLabelFromStatus(st) {
-  if (!st.bus_ok) {
-    return st.bus_error ? `Błąd połączenia (${st.bus_error})` : "Rozłączono";
-  }
-  const port = st.can_port || st.configured_port || "?";
-  const br = st.can_bitrate ? `${Math.round(st.can_bitrate / 1000)} kbps` : "?";
-  const iface = st.can_interface || "?";
-  const sec = st.secure_enabled ? " · Secure CAN" : "";
-  return `Połączono: ${port} / ${iface} ${br}${sec}`;
-}
-
-function scanLabelFromStatus(st, modules) {
-  if (guiRefreshInProgress) return footerScanText;
-  const ls = st.last_scan_status;
-  if (ls === "never") return "Brak skanu";
-  if (ls === "error") return "Błąd skanu";
-  const n = st.module_count ?? modules?.length ?? 0;
-  return `Moduły: ${n}`;
-}
-
-function selectedConnectionSuffix() {
-  if (selectedId == null) return "Wybrano ID: Brak";
-  const m = moduleById(selectedId);
-  if (m?.key_mismatch) return `Wybrano ID: ${selectedId} — niezgodny MASTER_KEY`;
-  return `Wybrano ID: ${selectedId}`;
-}
-
-async function runProgressSteps(steps, onComplete) {
-  const nested = guiRefreshInProgress;
-  const token = ++progressTaskToken;
-  if (!nested) guiRefreshInProgress = true;
-  try {
-    const total = steps.length;
-    for (let i = 0; i < total; i++) {
-      if (token !== progressTaskToken) return;
-      const [label, fn] = steps[i];
-      const pct = total <= 1 ? 50 : (i / total) * 90 + 5;
-      progressShow(label, pct);
-      updateFooter(undefined, label.replace(/\.+$/, ""));
-      await fn();
-    }
-    if (token !== progressTaskToken) return;
-    if (!nested) {
-      progressShow("Gotowe", 100);
-      if (typeof onComplete === "function") onComplete();
-      setTimeout(() => { if (!guiRefreshInProgress) progressIdle(); }, 400);
-    } else if (typeof onComplete === "function") {
-      onComplete();
-    }
-  } finally {
-    if (!nested) guiRefreshInProgress = false;
-  }
-}
-
-function apiUrl(path) {
-  return new URL(String(path).replace(/^\//, ""), window.location.href).toString();
-}
-
-async function api(path, opts) {
-  const res = await fetch(apiUrl(path), opts);
-  const data = await res.json().catch(() => ({}));
-  return { res, data };
-}
-
-function appendLog(msg) {
-  const box = document.getElementById("log-box");
-  const ts = new Date().toLocaleTimeString("pl-PL", { hour12: false });
-  box.textContent += `[${ts}] ${msg}\n`;
-  box.scrollTop = box.scrollHeight;
-}
-
-function setTab(name) {
-  currentTab = name;
-  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
-  document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === "panel-" + name));
-  scheduleTabLoad();
-}
-
-document.querySelectorAll(".tab").forEach(btn => {
-  btn.onclick = () => setTab(btn.dataset.tab);
-});
-
-function moduleById(id) {
-  return modulesCache.find(x => x.module_id === id);
-}
-
-function setTabLoading(on, text) {
-  tabLoading = on;
-  if (on && text) progressShow(text.replace(/^\[tab-load\]\s*/, ""), 35);
-  document.getElementById("btn-reload-tab").disabled = on || selectedId == null;
-}
-
-async function loadCurrentTab(force, wrapProgress = true) {
-  if (selectedId == null || currentTab === "logs") return;
-  if (tabLoading && !force) return;
-
-  const inner = async () => {
-    const tabName = currentTab;
-    setTabLoading(true, `ID=${selectedId} · ${tabName}`);
-    appendLog(`[tab-load] ID=${selectedId}, zakladka=${tabName}...`);
-    const { res, data } = await api(`/api/modules/${selectedId}/tab-load`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tab: tabName }),
-    });
-    let stepIdx = 0;
-    for (const step of (data.steps || [])) {
-      stepIdx++;
-      const mark = step.ok ? "OK" : "ERR";
-      appendLog(`  ${step.name}: ${mark}${step.error ? " — " + step.error : ""}`);
-      progressShow(step.name.replace(/\.+$/, ""), 20 + (stepIdx / Math.max(1, (data.steps||[]).length)) * 70);
-    }
-    if (!res.ok) {
-      appendLog(`  blad: ${data.error || res.status}`);
-      setTabLoading(false);
-      throw new Error(data.error || String(res.status));
-    }
-    appendLog(`[tab-load] zakonczono zakladke ID=${selectedId}.`);
-    if (data.mappings) mappingsCache = data.mappings;
-    if (data.sensors) sensorsCache = data.sensors;
-    if (data.control_relays?.length && selectedId != null) {
-      const m = moduleById(selectedId);
-      if (m) m.control_relays = data.control_relays;
-    }
-    await loadAll(false);
-    renderActivePanel();
-    setTabLoading(false);
-  };
-
-  if (wrapProgress && !guiRefreshInProgress) {
-    await runProgressSteps([
-      [`Ładowanie zakładki (${currentTab})…`, inner],
-    ], () => {
-      updateFooter(selectedConnectionSuffix(), scanLabelFromStatus(lastStatus, modulesCache));
-    });
-  } else {
-    await inner();
-    updateFooter(selectedConnectionSuffix(), scanLabelFromStatus(lastStatus, modulesCache));
-  }
-}
-
-function scheduleTabLoad() {
-  if (tabLoadTimer) clearTimeout(tabLoadTimer);
-  tabLoadTimer = setTimeout(() => loadCurrentTab(false), 80);
-}
-
-async function loadAll(refreshTab) {
-  const { res, data } = await api("/api/state");
-  if (!res.ok) {
-    updateFooter("Błąd API", `HTTP ${res.status}`);
-    return;
-  }
-  const st = data.status || {};
-  lastStatus = st;
-  modulesCache = data.modules || [];
-  updateFooter(
-    selectedId != null ? selectedConnectionSuffix() : connectionLabelFromStatus(st),
-    scanLabelFromStatus(st, modulesCache)
-  );
-  updateLockBanner();
-  renderModules();
-  if (selectedId != null) {
-    const m = moduleById(selectedId);
-    if (m?.runtime?.mappings?.length) mappingsCache = m.runtime.mappings;
-    if (m?.runtime?.sensors?.length) sensorsCache = m.runtime.sensors;
-  }
-  updateButtons();
-  if (refreshTab !== false) renderActivePanel();
-}
-
-function renderActivePanel() {
-  if (selectedId == null) return;
-  const m = moduleById(selectedId);
-  if (currentTab === "control") renderControl(selectedId);
-  if (currentTab === "gpio") renderGpioTab(selectedId);
-  if (currentTab === "shutters") renderShutters(selectedId);
-  if (currentTab === "mapping") renderMappings(m?.runtime?.mappings?.length ? m.runtime.mappings : mappingsCache);
-  if (currentTab === "sensors") renderSensors(m?.runtime?.sensors?.length ? m.runtime.sensors : sensorsCache);
-}
-
-function updateButtons() {
-  const has = selectedId != null;
-  ["btn-reboot","btn-ota-read","btn-gpio-clear","btn-reload-tab","btn-deep-refresh"].forEach(id => {
-    document.getElementById(id).disabled = !has || tabLoading;
-  });
-}
-
-function renderModules() {
-  const tb = document.getElementById("modules-body");
-  tb.innerHTML = "";
-  for (const m of modulesCache) {
-    const tr = document.createElement("tr");
-    tr.className = selectedId === m.module_id ? "selected" : "";
-    const sum = m.summary_details || `B=${m.button_count ?? "?"} R=${m.relay_count ?? "?"} S=${m.shutter_count ?? "?"}`;
-    tr.innerHTML = `<td>${m.module_id}</td><td>${m.name || "-"}</td><td>${m.hw_name || m.hw_type}</td><td>${m.mac || "-"}</td><td>${sum}</td>`;
-    tr.onclick = () => selectModule(m.module_id);
-    tb.appendChild(tr);
-  }
-}
-
-async function selectModule(id) {
-  selectedId = id;
-  pinoutCache = null;
-  mappingsCache = [];
-  sensorsCache = [];
-  document.getElementById("ota-box").style.display = "none";
-  renderModules();
-  updateButtons();
-  updateFooter(selectedConnectionSuffix(), scanLabelFromStatus(lastStatus, modulesCache));
-  updateLockBanner();
-  scheduleTabLoad();
-}
-
-function shutterRelaySet(m) {
-  const reserved = new Set();
-  for (const pair of Object.values((m.runtime || {}).shutter_map || {})) {
-    if (Array.isArray(pair)) { reserved.add(pair[0]); reserved.add(pair[1]); }
-  }
-  return reserved;
-}
-
-function renderControl(id) {
-  const m = moduleById(id);
-  if (!m) return;
-  const relays = (m.control_relays && m.control_relays.length)
-    ? m.control_relays
-    : (m.runtime?.relays || []);
-  const rb = document.getElementById("relays-box");
-  if (!relays.length) {
-    rb.innerHTML = "<span class='sub'>Brak danych — przeładuj zakładkę Sterowanie</span>";
-    return;
-  }
-  rb.innerHTML = "";
-  for (const r of relays) {
-    if (r.shutter_reserved) continue;
-    const wrap = document.createElement("div");
-    wrap.style.marginBottom = "0.55rem";
-    const pulse = r.pulse_ms || 0;
-    const pulseHint = pulse > 0 ? ` <span class="warn">[impuls ${pulse}ms]</span>` : "";
-    wrap.innerHTML = `<span class="pill">R${r.relay_no}</span> ${r.on ? "ON" : "OFF"}${pulseHint}<br>`;
-    ["on","off","toggle"].forEach(st => {
-      const b = document.createElement("button");
-      b.textContent = st.toUpperCase(); b.className = "relay-btn secondary";
-      b.onclick = () => setRelay(id, r.relay_no, st, pulse);
-      wrap.appendChild(b);
-    });
-    const inp = document.createElement("input");
-    inp.type = "number"; inp.min = 0; inp.max = 65535; inp.value = pulse;
-    const save = document.createElement("button");
-    save.textContent = "Zapisz impuls ms"; save.className = "relay-btn secondary";
-    save.onclick = () => setPulse(id, r.relay_no, inp.value);
-    wrap.appendChild(inp); wrap.appendChild(save);
-    rb.appendChild(wrap);
-  }
-}
-
-function renderShutters(id) {
-  const m = moduleById(id);
-  const tb = document.getElementById("shutters-body");
-  tb.innerHTML = "";
-  if (!m) return;
-  const rt = m.runtime || {};
-  const map = rt.shutter_map || {};
-  const status = {};
-  for (const s of (rt.shutters || [])) status[s.shutter_no] = s;
-  const nums = new Set([...Object.keys(map).map(Number), ...Object.keys(status).map(Number)]);
-  if (!nums.size) {
-    tb.innerHTML = "<tr><td colspan='5' class='sub'>Brak skonfigurowanych rolet — przeładuj zakładkę</td></tr>";
-    return;
-  }
-  for (const sid of [...nums].sort((a,b) => a-b)) {
-    const pair = map[String(sid)] || map[sid] || [0,0];
-    const st = status[sid] || {};
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td>S${sid}</td><td>${pair[0]||"-"}</td><td>${pair[1]||"-"}</td><td>${st.position ?? "?"}% ${st.direction_text || ""}</td><td class="sh-cmd"></td>`;
-    const cell = tr.querySelector(".sh-cmd");
-    ["open","stop","close"].forEach(cmd => {
-      const b = document.createElement("button");
-      b.textContent = cmd; b.className = "relay-btn secondary";
-      b.onclick = () => setShutter(id, sid, cmd);
-      cell.appendChild(b);
-    });
-    tb.appendChild(tr);
-  }
-}
-
-function renderMappings(rows) {
-  const tb = document.getElementById("mapping-body");
-  tb.innerHTML = "";
-  if (!rows?.length) {
-    tb.innerHTML = "<tr><td colspan='7' class='sub'>Brak mapowań — przeładuj zakładkę</td></tr>";
-    return;
-  }
-  for (const r of rows) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${r.button}</td><td>${r.action}</td><td>${r.receiver}</td><td>${r.target_id}</td><td>${r.target_type}</td><td>${r.target}</td><td>${r.state}</td>`;
-    tb.appendChild(tr);
-  }
-}
-
-function renderSensors(rows) {
-  const tb = document.getElementById("sensors-body");
-  tb.innerHTML = "";
-  if (!rows?.length) {
-    tb.innerHTML = "<tr><td colspan='3' class='sub'>Brak danych — przeładuj zakładkę Sensory</td></tr>";
-    return;
-  }
-  rows.forEach((s, i) => {
-    const tr = document.createElement("tr");
-    const hex = (s.data || []).map(b => (b&0xff).toString(16).padStart(2,"0")).join(" ");
-    tr.innerHTML = `<td>${s.sensor_no ?? i+1}</td><td>${SENSOR_TYPES[s.sensor_type] || s.sensor_type}</td><td>${hex || "-"}</td>`;
-    tb.appendChild(tr);
-  });
-}
-
-async function renderGpioTab(id) {
-  const { data } = await api(`/api/modules/${id}/pinout`);
-  pinoutCache = data;
-  renderGpioTable();
-  const m = moduleById(id);
-  const bt = (m?.runtime?.button_timing) || {};
-  document.getElementById("button-timing").textContent = bt.multiclick_ms != null
-    ? `MultiClick=${bt.multiclick_ms} ms · LongPress=${bt.longpress_ms} ms`
-    : "";
-}
-
-function renderGpioTable() {
-  const tb = document.getElementById("gpio-body");
-  const hint = document.getElementById("pinout-hint");
-  tb.innerHTML = "";
-  if (!pinoutCache?.ok) {
-    hint.textContent = pinoutCache?.error || "Brak profilu pinout.";
-    return;
-  }
-  hint.textContent = `Pinout: ${pinoutCache.pinout_name} · ${(pinoutCache.gpios||[]).length} pinów`;
-  for (const row of pinoutCache.gpios || []) {
-    const tr = document.createElement("tr");
-    if (row.reserved) tr.className = "reserved";
-    const state = row.logical != null ? `${row.logical}/${row.raw}` : "—";
-    tr.innerHTML = `<td>GPIO${row.gpio}</td><td>${row.role_name || "Unused"}</td><td>${row.index ?? 0}</td><td>${state}</td><td class="gpio-assign"></td>`;
-    const cell = tr.querySelector(".gpio-assign");
-    if (!row.reserved) {
-      const sel = document.createElement("select");
-      ROLES.forEach(r => { const o = document.createElement("option"); o.value = r; o.textContent = r; if (r === (row.role_name||"Unused")) o.selected = true; sel.appendChild(o); });
-      const idx = document.createElement("input"); idx.type = "number"; idx.min = 0; idx.max = 255; idx.value = row.index || 0;
-      const btn = document.createElement("button"); btn.textContent = "OK"; btn.className = "relay-btn";
-      btn.onclick = () => assignGpio(row.gpio, sel.value, idx.value);
-      cell.appendChild(sel); cell.appendChild(idx); cell.appendChild(btn);
-    } else cell.textContent = "zarezerwowany";
-    tb.appendChild(tr);
-  }
-}
-
-async function setRelay(mid, relayNo, state, pulseMs = 0) {
-  const { res, data } = await api(`/api/modules/${mid}/relays/${relayNo}`, {
-    method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ state }),
-  });
-  if (res.ok && data.on !== undefined) {
-    const m = moduleById(mid);
-    if (m) {
-      m.runtime = m.runtime || {};
-      m.runtime.relays = m.runtime.relays || [];
-      let row = m.runtime.relays.find(r => r.relay_no === relayNo);
-      if (row) row.on = data.on;
-      else m.runtime.relays.push({ relay_no: relayNo, on: data.on, pulse_ms: pulseMs, source: "local" });
-      m.control_relays = m.control_relays || [];
-      let crow = m.control_relays.find(r => r.relay_no === relayNo);
-      if (crow) crow.on = data.on;
-      else m.control_relays.push({ relay_no: relayNo, on: data.on, pulse_ms: pulseMs, shutter_reserved: false });
-    }
-    renderControl(mid);
-    const pm = Number(data.pulse_ms || pulseMs || 0);
-    if (pm > 0 && data.on && (state === "on" || state === "toggle")) {
-      setTimeout(() => loadAll(false).then(() => renderControl(mid)), pm + 120);
-    }
-    return;
-  }
-  await loadAll(false);
-  renderControl(mid);
-}
-async function setPulse(mid, relayNo, pulse_ms) {
-  await api(`/api/modules/${mid}/relays/${relayNo}/pulse`, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ pulse_ms: Number(pulse_ms) }) });
-  await loadCurrentTab(true);
-}
-async function setShutter(mid, shutterNo, command) {
-  await api(`/api/modules/${mid}/shutters/${shutterNo}`, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ command, param: 0 }) });
-  await loadAll(false); renderShutters(mid);
-}
-async function assignGpio(gpio, role, index) {
-  if (selectedId == null) return;
-  await api(`/api/modules/${selectedId}/gpio/${gpio}`, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ role, index: Number(index), flags: 0 }) });
-  await renderGpioTab(selectedId);
-}
-
-document.getElementById("btn-refresh").onclick = () => loadAll(true);
-document.getElementById("btn-deep-refresh").onclick = async () => {
-  if (selectedId == null) return;
-  document.getElementById("btn-deep-refresh").disabled = true;
-  await runProgressSteps([
-    [`Deep refresh modułu ID=${selectedId}…`, async () => {
-      appendLog(`[deep-refresh] modul ID=${selectedId}...`);
-      const { res, data } = await api(`/api/modules/${selectedId}/refresh`, { method: "POST" });
-      appendLog(res.ok ? "[deep-refresh] OK" : `[deep-refresh] blad: ${data.error || res.status}`);
-      await loadAll(true);
-      await loadCurrentTab(true, false);
-    }],
-  ]);
-  document.getElementById("btn-deep-refresh").disabled = false;
-};
-document.getElementById("btn-reload-tab").onclick = () => loadCurrentTab(true);
-document.getElementById("btn-scan").onclick = async () => {
-  document.getElementById("btn-scan").disabled = true;
-  appendLog("Skan F5...");
-  await runProgressSteps([
-    ["Skanowanie modułów CAN…", async () => {
-      progressShow("Czyszczenie bufora CAN…", 10);
-      progressShow("Wysyłanie skanu GET_SUMMARY…", 25);
-      const { res, data } = await api("/api/scan", { method: "POST" });
-      progressShow("Odbiór odpowiedzi…", 55);
-      if (!res.ok) throw new Error(data.error || String(res.status));
-      progressShow("Przetwarzanie wyników…", 88);
-      await loadAll(true);
-      if (selectedId != null) await loadCurrentTab(true, false);
-      const n = data.modules_after ?? lastStatus.module_count ?? 0;
-      updateFooter(
-        selectedId != null ? selectedConnectionSuffix() : connectionLabelFromStatus(lastStatus),
-        `Moduły: ${n}`
-      );
-    }],
-  ], () => appendLog("Skan zakonczony."));
-  document.getElementById("btn-scan").disabled = false;
-};
-document.getElementById("btn-reboot").onclick = async () => {
-  if (selectedId == null || !confirm(`Restart modułu ID=${selectedId}?`)) return;
-  await api(`/api/modules/${selectedId}/reboot`, { method: "POST" });
-  appendLog(`Restart modulu ${selectedId} wyslany.`);
-};
-document.getElementById("btn-gpio-clear").onclick = async () => {
-  if (selectedId == null || !confirm("Wyczyścić wszystkie role GPIO modułu?")) return;
-  await api(`/api/modules/${selectedId}/gpio/clear`, { method: "POST" });
-  await loadCurrentTab(true);
-};
-document.getElementById("btn-ota-read").onclick = async () => {
-  if (selectedId == null) return;
-  const { data } = await api(`/api/modules/${selectedId}/ota`);
-  const box = document.getElementById("ota-box");
-  box.style.display = "block";
-  box.textContent = JSON.stringify(data, null, 2);
-};
-document.getElementById("btn-clear-log").onclick = () => { document.getElementById("log-box").textContent = ""; };
-
-document.addEventListener("keydown", e => {
-  if (e.key === "F5") { e.preventDefault(); document.getElementById("btn-scan").click(); }
-});
-
-loadAll(false);
-setInterval(() => { if (!guiRefreshInProgress && !tabLoading) loadAll(false); }, 30000);
-</script>
+  <script>
+    document.getElementById("map-action").innerHTML = ["Jednoklik","Dwuklik","Trojklik","Czteroklik","Piecioklik","Dlugie nacisniecie"].map(a=>`<option>${a}</option>`).join("");
+    document.getElementById("map-state").innerHTML = ["Wylacz","Zalacz","Przelacz"].map(a=>`<option>${a}</option>`).join("");
+  </script>
+  <script src="/static/app.js"></script>
 </body>
 </html>

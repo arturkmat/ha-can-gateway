@@ -8,10 +8,12 @@ from typing import TYPE_CHECKING, Any
 from pinout_data import DEVICE_PINOUTS, STRAPPING_PIN_NOTES
 from protocol_constants import (
     COMMAND_CLEAR_ALL_GPIO_ROLES,
+    COMMAND_CLEAR_GPIO_ROLE,
     COMMAND_GET_GPIO_ROLE,
     COMMAND_GET_GPIO_VALUE,
     COMMAND_GET_RELAY_PULSE,
     COMMAND_OTA_GET_INFO,
+    COMMAND_SET_BUTTON_TIMING,
     COMMAND_SET_GPIO_ROLE,
     COMMAND_SET_RELAY_PULSE,
     HW_TYPE_OTHER,
@@ -294,3 +296,34 @@ def get_ota_info(bus: BusManager, module_id: int) -> dict[str, Any]:
 
 def list_pinout_profiles() -> dict[str, Any]:
     return {"profiles": sorted(DEVICE_PINOUTS.keys())}
+
+
+def set_button_timing(
+    bus: BusManager,
+    module_id: int,
+    multiclick_ms: int,
+    longpress_ms: int,
+) -> dict[str, Any]:
+    mc = max(100, min(2000, int(multiclick_ms)))
+    lp = max(300, min(2550, int(longpress_ms)))
+    resp = bus.send_config_and_wait(
+        module_id,
+        COMMAND_SET_BUTTON_TIMING,
+        [mc // 10, lp // 10],
+        timeout=0.6,
+    )
+    if resp is None or len(resp) < 3 or int(resp[2]) != 0:
+        return {"ok": False, "error": "set button timing failed"}
+    bus.store_button_timing(module_id, mc, lp)
+    return {"ok": True, "module_id": int(module_id), "multiclick_ms": mc, "longpress_ms": lp}
+
+
+def clear_gpio_role(bus: BusManager, module_id: int, gpio: int) -> dict[str, Any]:
+    resp = bus.send_config_and_wait(module_id, COMMAND_CLEAR_GPIO_ROLE, [int(gpio)], timeout=0.5)
+    ok = resp is not None and len(resp) >= 3 and int(resp[2]) == 0
+    if ok:
+        detail = bus.module_detail(int(module_id)) or {}
+        roles = dict((detail.get("runtime") or {}).get("gpio_roles") or {})
+        roles.pop(str(int(gpio)), None)
+        bus.store_gpio_roles(int(module_id), roles)
+    return {"ok": ok, "module_id": int(module_id), "gpio": int(gpio)}

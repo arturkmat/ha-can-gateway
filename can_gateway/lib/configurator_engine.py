@@ -24,6 +24,7 @@ from protocol_constants import (
     CAN_ID_RELAYS,
     CAN_ID_RELAYS_MCP23017,
     CAN_ID_SENSORS,
+    CAN_ID_SHUTTER_CMD,
     CAN_ID_SHUTTER_STATUS,
     COMMAND_GET_BUILD_INFO,
     COMMAND_GET_BUTTON_TIMING,
@@ -37,6 +38,7 @@ from protocol_constants import (
     COMMAND_GET_SUMMARY,
     COMMAND_PROVISION_GET_MASTER_KEY_STATE,
     COMMAND_SCAN_MCP23017,
+    COMMAND_SCAN_SENSORS,
     COMMAND_SET_MODULE_ID,
     COMMAND_SET_MODULE_ID_BY_MAC,
     COMMAND_SET_RELAY_STATE,
@@ -113,6 +115,7 @@ class ModuleContext:
     shift595_q_flags: dict[int, int] = field(default_factory=dict)
     mappings: list[dict[str, Any]] = field(default_factory=list)
     sensors: list[dict[str, Any]] = field(default_factory=list)
+    sensor_scan: dict[str, Any] | None = None
     button_timing: dict[str, int] = field(default_factory=dict)
 
 
@@ -345,6 +348,53 @@ class ConfiguratorEngine:
         self.sync_relay_pulse_cache()
         self.read_relay_states_from_module()
 
+    def set_shutter_command(
+        self,
+        module_id: int,
+        shutter_no: int,
+        command: str | int,
+        param: int = 0,
+    ) -> dict[str, Any]:
+        cmd_map = {"open": 1, "close": 2, "stop": 3, "position": 4}
+        if isinstance(command, str):
+            cmd = cmd_map.get(command.strip().lower())
+        else:
+            cmd = int(command)
+        if cmd is None:
+            return {"ok": False, "error": "invalid command"}
+        mid = int(module_id)
+        sid = int(shutter_no)
+        if sid < 1 or sid > MAX_SHUTTERS:
+            return {"ok": False, "error": "invalid shutter_no", "module_id": mid}
+        if self._module_key_mismatch_detected(mid):
+            return {"ok": False, "error": "MASTER_KEY mismatch", "module_id": mid}
+        for item in self.discovered_modules:
+            if item.get("module_id") == mid and item.get("has_master_key") is None:
+                self._sync_module_master_key_state(mid)
+                break
+        target = max(0, min(100, int(param)))
+        param_byte = target if cmd == 4 else 0
+        payload = [mid, sid, cmd, param_byte, 0, 0, 0, 0]
+        self._io_acquire()
+        try:
+            self._refresh_secure_transport()
+            self._secure_bus_send(mid, CAN_ID_SHUTTER_CMD, payload, log_traffic=False)
+            deadline = time.time() + 0.45
+            while time.time() < deadline:
+                message = self._safe_recv(min(0.05, max(0.0, deadline - time.time())))
+                if message is None:
+                    continue
+                message = self._normalize(message)
+                if message is None:
+                    continue
+                self.handle_can_message(message, already_normalized=True)
+            self._io.notify()
+            return {"ok": True, "module_id": mid, "shutter_no": sid, "command": command}
+        except RuntimeError as exc:
+            return {"ok": False, "error": str(exc), "module_id": mid, "shutter_no": sid}
+        finally:
+            self._io_release()
+
     def set_relay_state(self, module_id: int, relay_no: int, state: str) -> dict[str, Any]:
         state_map = {"on": 1, "off": 0, "toggle": 2}
         code = state_map.get(str(state).lower())
@@ -472,6 +522,7 @@ class ConfiguratorEngine:
             "mappings": list(ctx.mappings),
             "hw_flags": ctx.hw_flags,
             "sensors": list(ctx.sensors),
+            "sensor_scan": dict(ctx.sensor_scan) if ctx.sensor_scan else None,
             "gpio_roles": gpio_roles,
             "gpio_values": gpio_values,
         }
@@ -1015,6 +1066,14 @@ class ConfiguratorEngine:
         elif cmd == COMMAND_GET_RELAY_PULSE and len(data) >= 6:
             rn = int(data[3])
             ctx.relay_pulse_ms_by_index[rn] = int(data[4]) | (int(data[5]) << 8)
+        elif cmd == COMMAND_SCAN_SENSORS and len(data) >= 8:
+            ctx.sensor_scan = {
+                "flags": int(data[3]),
+                "ds18_gpio_or_count": int(data[4]),
+                "i2c_sda": int(data[5]),
+                "i2c_scl": int(data[6]),
+                "addr_flags": int(data[7]),
+            }
         elif cmd == COMMAND_SET_RELAY_STATE and len(data) >= 5:
             self._store_relay_state(ctx.module_id, int(data[3]), int(data[4]))
         elif cmd == COMMAND_GET_BUTTON_TIMING and len(data) >= 5:
@@ -1089,6 +1148,20 @@ class ConfiguratorEngine:
                     return False
                 break
         return False
+
+    def _module_has_master_key_for_tx(self, module_id: int) -> bool:
+        """Decyzja TX: nieznany stan klucza + host z MASTER_KEY → szyfruj (0x650 itd.)."""
+        if module_id in UNKNOWN_MODULE_IDS:
+            return False
+        for item in self.discovered_modules:
+            if item.get("module_id") == module_id:
+                state = item.get("has_master_key")
+                if state is True:
+                    return True
+                if state is False:
+                    return False
+                break
+        return self._master_key is not None
 
     def _module_key_mismatch_detected(self, module_id: int) -> bool:
         return module_id in self._module_key_mismatch
@@ -1172,7 +1245,8 @@ class ConfiguratorEngine:
     ) -> None:
         raw = bytes(int(b) & 0xFF for b in data)
         module_has_key = (
-            target_module_id not in UNKNOWN_MODULE_IDS and self._module_has_master_key(target_module_id)
+            target_module_id not in UNKNOWN_MODULE_IDS
+            and self._module_has_master_key_for_tx(target_module_id)
         )
         if (
             target_module_id not in UNKNOWN_MODULE_IDS

@@ -16,6 +16,8 @@ def prepare_outgoing_frames(
     module_id: int,
     can_id: int,
     data: list[int],
+    *,
+    module_has_master_key: bool | None = None,
 ) -> list[tuple[int, list[int]]] | None:
     raw = bytes(int(b) & 0xFF for b in data)
     padded = list(raw) + [0] * (8 - len(raw))
@@ -31,6 +33,10 @@ def prepare_outgoing_frames(
         if can_id in PLAINTEXT_TELEMETRY_CAN_IDS:
             return [(can_id, padded)]
         return None
+
+    # Modul bez klucza — telemetry/komendy (0x650) plaintext.
+    if can_id in PLAINTEXT_TELEMETRY_CAN_IDS and module_has_master_key is False:
+        return [(can_id, padded)]
 
     if can_id == CAN_ID_CONFIG_REQUEST:
         frames = transport.build_secure_config_request(module_id, data)

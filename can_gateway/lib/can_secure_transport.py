@@ -21,6 +21,7 @@ from protocol_constants import (
     CAN_ID_SECURE_TLV_RESPONSE,
     CAN_ID_SENSOR_BIND_EVENT,
     CAN_ID_SHUTTER_BIND_EVENT,
+    CAN_ID_SHUTTER_CMD,
     PLAINTEXT_TELEMETRY_CAN_IDS,
     COMMAND_CAN_MUTE,
     COMMAND_GET_SUMMARY,
@@ -120,6 +121,8 @@ def decode_can_frame_value(value: bytes) -> tuple[int, bool, bytes]:
 def is_plaintext_bootstrap_tx(can_id: int, data: bytes, *, module_has_master_key: bool = False) -> bool:
     if can_id == CAN_ID_DEVICE_INFO:
         return True
+    if can_id == CAN_ID_SHUTTER_CMD:
+        return True
     if can_id in (
         CAN_ID_BUTTON_BIND_EVENT,
         CAN_ID_RELAY_BIND_EVENT,
@@ -146,6 +149,8 @@ def is_plaintext_bootstrap_tx(can_id: int, data: bytes, *, module_has_master_key
 
 def is_plaintext_bootstrap_rx(can_id: int, data: bytes, *, module_has_master_key: bool = False) -> bool:
     if can_id == CAN_ID_DEVICE_INFO:
+        return True
+    if can_id == CAN_ID_SHUTTER_CMD:
         return True
     if can_id in (
         CAN_ID_BUTTON_BIND_EVENT,

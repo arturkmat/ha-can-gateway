@@ -9,17 +9,26 @@ from aiohttp import web
 from .bus_manager import BusManager
 from .gpio_service import (
     clear_all_gpio_roles,
+    clear_gpio_role,
     get_ota_info,
     list_pinout_profiles,
     module_pinout_payload,
     read_gpio_roles,
     read_gpio_values,
+    set_button_timing,
     set_gpio_role,
     set_relay_pulse_ms,
     read_relay_pulse_ms,
 )
+from .mapping_service import read_all_mappings
+from .mapping_write_service import clear_mappings, send_mappings
+from .module_service import get_module_name, identify_module, set_module_id_by_mac, set_module_name
 from .mqtt_bridge import MqttBridge
 from .options import load_options
+from .ota_upload_service import upload_firmware
+from .provision_service import get_master_key_state, get_provision_state, send_master_key_to_module
+from .sensor_scan_service import scan_1wire, scan_i2c, scan_mcp23017, scan_sensors
+from .shutter_config_service import clear_shutter, get_shutter_config, set_shutter_relays, set_shutter_times
 from .tab_load_service import load_module_tab
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,6 +50,16 @@ def create_app(bus: BusManager) -> web.Application:
 
     async def api_state(_request: web.Request) -> web.Response:
         return web.json_response(bus.full_state())
+
+    async def api_entities(_request: web.Request) -> web.Response:
+        snapshot = bus.full_state()
+        return web.json_response(
+            {
+                "entities": snapshot.get("entities") or [],
+                "module_count": len(snapshot.get("modules") or []),
+                "status": snapshot.get("status"),
+            }
+        )
 
     async def api_modules(_request: web.Request) -> web.Response:
         return web.json_response({"modules": bus.list_modules()})
@@ -228,6 +247,205 @@ def create_app(bus: BusManager) -> web.Application:
         status = 200 if result.get("ok") else 503
         return web.json_response(result, status=status)
 
+    async def api_module_ota_upload(request: web.Request) -> web.Response:
+        try:
+            mid = int(request.match_info["module_id"])
+        except (KeyError, ValueError):
+            return _json_error("invalid module_id")
+        reader = await request.multipart()
+        firmware = None
+        async for part in reader:
+            if part.name == "firmware":
+                firmware = await part.read(decode=False)
+                break
+        if not firmware:
+            return _json_error("missing firmware file")
+        result = await asyncio.to_thread(upload_firmware, bus, mid, firmware)
+        status = 200 if result.get("ok") else 503
+        return web.json_response(result, status=status)
+
+    async def api_module_mappings_get(request: web.Request) -> web.Response:
+        try:
+            mid = int(request.match_info["module_id"])
+        except (KeyError, ValueError):
+            return _json_error("invalid module_id")
+        result = await asyncio.to_thread(read_all_mappings, bus, mid)
+        status = 200 if result.get("ok") else 503
+        return web.json_response(result, status=status)
+
+    async def api_module_mappings_post(request: web.Request) -> web.Response:
+        try:
+            mid = int(request.match_info["module_id"])
+        except (KeyError, ValueError):
+            return _json_error("invalid module_id")
+        body = await request.json()
+        rows = body.get("mappings") or body.get("rows") or []
+        result = await asyncio.to_thread(send_mappings, bus, mid, rows)
+        status = 200 if result.get("ok") else 503
+        return web.json_response(result, status=status)
+
+    async def api_module_mappings_delete(request: web.Request) -> web.Response:
+        try:
+            mid = int(request.match_info["module_id"])
+        except (KeyError, ValueError):
+            return _json_error("invalid module_id")
+        result = await asyncio.to_thread(clear_mappings, bus, mid)
+        return web.json_response(result)
+
+    async def api_module_name_put(request: web.Request) -> web.Response:
+        try:
+            mid = int(request.match_info["module_id"])
+        except (KeyError, ValueError):
+            return _json_error("invalid module_id")
+        body = await request.json()
+        result = await asyncio.to_thread(set_module_name, bus, mid, str(body.get("name", "")))
+        status = 200 if result.get("ok") else 503
+        return web.json_response(result, status=status)
+
+    async def api_module_name_get(request: web.Request) -> web.Response:
+        try:
+            mid = int(request.match_info["module_id"])
+        except (KeyError, ValueError):
+            return _json_error("invalid module_id")
+        result = await asyncio.to_thread(get_module_name, bus, mid)
+        status = 200 if result.get("ok") else 503
+        return web.json_response(result, status=status)
+
+    async def api_module_identify(request: web.Request) -> web.Response:
+        try:
+            mid = int(request.match_info["module_id"])
+        except (KeyError, ValueError):
+            return _json_error("invalid module_id")
+        body = {}
+        if request.can_read_body:
+            try:
+                body = await request.json()
+            except Exception:  # noqa: BLE001
+                body = {}
+        result = await asyncio.to_thread(identify_module, bus, mid, int(body.get("seconds", 5)))
+        return web.json_response(result)
+
+    async def api_set_module_id(request: web.Request) -> web.Response:
+        body = await request.json()
+        result = await asyncio.to_thread(
+            set_module_id_by_mac,
+            bus,
+            str(body.get("mac", "")),
+            int(body.get("module_id", 0)),
+        )
+        status = 200 if result.get("ok") else 503
+        return web.json_response(result, status=status)
+
+    async def api_master_key_get(request: web.Request) -> web.Response:
+        try:
+            mid = int(request.match_info["module_id"])
+        except (KeyError, ValueError):
+            return _json_error("invalid module_id")
+        result = await asyncio.to_thread(get_master_key_state, bus, mid)
+        return web.json_response(result)
+
+    async def api_provision_state_get(request: web.Request) -> web.Response:
+        try:
+            mid = int(request.match_info["module_id"])
+        except (KeyError, ValueError):
+            return _json_error("invalid module_id")
+        result = await asyncio.to_thread(get_provision_state, bus, mid)
+        return web.json_response(result)
+
+    async def api_master_key_post(request: web.Request) -> web.Response:
+        try:
+            mid = int(request.match_info["module_id"])
+        except (KeyError, ValueError):
+            return _json_error("invalid module_id")
+        body = await request.json()
+        key_hex = str(body.get("master_key_hex", "")).strip()
+        if not key_hex:
+            opts = load_options()
+            key_hex = opts.master_key_hex.strip()
+        result = await asyncio.to_thread(send_master_key_to_module, bus, mid, key_hex)
+        status = 200 if result.get("ok") else 503
+        return web.json_response(result, status=status)
+
+    async def api_shutter_config_get(request: web.Request) -> web.Response:
+        try:
+            mid = int(request.match_info["module_id"])
+            sid = int(request.match_info["shutter_no"])
+        except (KeyError, ValueError):
+            return _json_error("invalid path")
+        result = await asyncio.to_thread(get_shutter_config, bus, mid, sid)
+        status = 200 if result.get("ok") else 503
+        return web.json_response(result, status=status)
+
+    async def api_shutter_config_put(request: web.Request) -> web.Response:
+        try:
+            mid = int(request.match_info["module_id"])
+            sid = int(request.match_info["shutter_no"])
+        except (KeyError, ValueError):
+            return _json_error("invalid path")
+        body = await request.json()
+        if body.get("clear"):
+            result = await asyncio.to_thread(clear_shutter, bus, mid, sid)
+        else:
+            ro = int(body.get("relay_open", 0))
+            rc = int(body.get("relay_close", 0))
+            result = await asyncio.to_thread(set_shutter_relays, bus, mid, sid, ro, rc)
+            if result.get("ok") and ("time_open_s" in body or "time_close_s" in body):
+                times = await asyncio.to_thread(
+                    set_shutter_times,
+                    bus,
+                    mid,
+                    sid,
+                    time_open_s=body.get("time_open_s"),
+                    time_close_s=body.get("time_close_s"),
+                )
+                result["times"] = times
+        status = 200 if result.get("ok") else 503
+        return web.json_response(result, status=status)
+
+    async def api_scan_sensor(request: web.Request) -> web.Response:
+        try:
+            mid = int(request.match_info["module_id"])
+            kind = str(request.match_info["kind"])
+        except (KeyError, ValueError):
+            return _json_error("invalid path")
+        fn = {
+            "1wire": scan_1wire,
+            "i2c": scan_i2c,
+            "sensors": scan_sensors,
+            "mcp23017": scan_mcp23017,
+        }.get(kind)
+        if fn is None:
+            return _json_error("unknown scan kind")
+        result = await asyncio.to_thread(fn, bus, mid)
+        status = 200 if result.get("ok") else 503
+        return web.json_response(result, status=status)
+
+    async def api_button_timing_put(request: web.Request) -> web.Response:
+        try:
+            mid = int(request.match_info["module_id"])
+        except (KeyError, ValueError):
+            return _json_error("invalid module_id")
+        body = await request.json()
+        result = await asyncio.to_thread(
+            set_button_timing,
+            bus,
+            mid,
+            int(body.get("multiclick_ms", 400)),
+            int(body.get("longpress_ms", 800)),
+        )
+        status = 200 if result.get("ok") else 503
+        return web.json_response(result, status=status)
+
+    async def api_gpio_clear_one(request: web.Request) -> web.Response:
+        try:
+            mid = int(request.match_info["module_id"])
+            gpio = int(request.match_info["gpio"])
+        except (KeyError, ValueError):
+            return _json_error("invalid path")
+        result = await asyncio.to_thread(clear_gpio_role, bus, mid, gpio)
+        status = 200 if result.get("ok") else 503
+        return web.json_response(result, status=status)
+
     async def index(_request: web.Request) -> web.Response:
         index_path = STATIC_DIR / "index.html"
         if not index_path.is_file():
@@ -238,6 +456,7 @@ def create_app(bus: BusManager) -> web.Application:
     app.router.add_get("/api/health", health)
     app.router.add_get("/api/status", api_status)
     app.router.add_get("/api/state", api_state)
+    app.router.add_get("/api/entities", api_entities)
     app.router.add_get("/api/modules", api_modules)
     app.router.add_get("/api/modules/{module_id}", api_module_detail)
     app.router.add_post("/api/scan", api_scan)
@@ -255,6 +474,22 @@ def create_app(bus: BusManager) -> web.Application:
     app.router.add_post("/api/modules/{module_id}/gpio/clear", api_gpio_clear)
     app.router.add_post("/api/modules/{module_id}/gpio/{gpio}", api_gpio_role_set)
     app.router.add_get("/api/modules/{module_id}/ota", api_module_ota)
+    app.router.add_post("/api/modules/{module_id}/ota/upload", api_module_ota_upload)
+    app.router.add_get("/api/modules/{module_id}/mappings", api_module_mappings_get)
+    app.router.add_post("/api/modules/{module_id}/mappings", api_module_mappings_post)
+    app.router.add_delete("/api/modules/{module_id}/mappings", api_module_mappings_delete)
+    app.router.add_get("/api/modules/{module_id}/name", api_module_name_get)
+    app.router.add_put("/api/modules/{module_id}/name", api_module_name_put)
+    app.router.add_post("/api/modules/{module_id}/identify", api_module_identify)
+    app.router.add_post("/api/modules/set-id-by-mac", api_set_module_id)
+    app.router.add_get("/api/modules/{module_id}/master-key", api_master_key_get)
+    app.router.add_post("/api/modules/{module_id}/master-key", api_master_key_post)
+    app.router.add_get("/api/modules/{module_id}/provision-state", api_provision_state_get)
+    app.router.add_get("/api/modules/{module_id}/shutters/{shutter_no}/config", api_shutter_config_get)
+    app.router.add_put("/api/modules/{module_id}/shutters/{shutter_no}/config", api_shutter_config_put)
+    app.router.add_post("/api/modules/{module_id}/scan/{kind}", api_scan_sensor)
+    app.router.add_put("/api/modules/{module_id}/button-timing", api_button_timing_put)
+    app.router.add_delete("/api/modules/{module_id}/gpio/{gpio}", api_gpio_clear_one)
     app.router.add_static("/static", STATIC_DIR, show_index=False)
     return app
 

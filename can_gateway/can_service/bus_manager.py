@@ -16,7 +16,6 @@ from protocol_constants import (
     CAN_ID_RELAYS,
     CAN_ID_RELAYS_MCP23017,
     CAN_ID_SENSORS,
-    CAN_ID_SHUTTER_CMD,
     CAN_ID_SHUTTER_STATUS,
     COMMAND_GET_BUILD_INFO,
     COMMAND_GET_BUTTON_TIMING,
@@ -51,14 +50,46 @@ from .options import AddonOptions, CAN_INTERFACE_GS_USB, CAN_INTERFACE_SLCAN
 _LOGGER = logging.getLogger(__name__)
 
 SERIAL_BAUD_CANDIDATES = (115200, 460800)
+_gs_usb_out_ep_patch_applied = False
+
+
+def _apply_cannectivity_gs_usb_out_ep_patch() -> None:
+    global _gs_usb_out_ep_patch_applied
+    if _gs_usb_out_ep_patch_applied:
+        return
+    try:
+        from gs_usb.constants import GS_CAN_MODE_HW_TIMESTAMP
+        from gs_usb.gs_usb import (
+            GS_USB_CANNECTIVITY_PRODUCT_ID,
+            GS_USB_CANNECTIVITY_VENDOR_ID,
+            GsUsb,
+        )
+    except ImportError:
+        return
+
+    def _send(self, frame):
+        hw_timestamps = (
+            (self.device_flags & GS_CAN_MODE_HW_TIMESTAMP) == GS_CAN_MODE_HW_TIMESTAMP
+        )
+        packed = frame.pack(hw_timestamps)
+        dev = self.gs_usb
+        if (
+            dev.idVendor == GS_USB_CANNECTIVITY_PRODUCT_ID
+            and dev.idProduct == GS_USB_CANNECTIVITY_PRODUCT_ID
+        ):
+            dev.write(0x01, packed)
+        else:
+            dev.write(0x02, packed)
+        return True
+
+    GsUsb.send = _send
+    _gs_usb_out_ep_patch_applied = True
 _BROADCAST_ATTEMPTS = 3
 _BROADCAST_GAP_S = 0.08
 _PASSIVE_LISTEN_S = 4.5
 _NAME_READ_GAP_S = 0.25
 MAX_LOCAL_RELAYS = 16
 RELAY_GPIO_ROLE = 2  # PIN_ROLE_MAP["Relay"]
-
-SHUTTER_CMD_MAP = {"open": 1, "close": 2, "stop": 3, "position": 4}
 
 
 @dataclass
@@ -212,7 +243,7 @@ class BusManager:
                 "module_count": len(self._modules),
                 "last_scan_status": self._last_scan_status,
                 "last_scan_at": self._last_scan_at,
-                "version": "0.4.5",
+                "version": "0.5.0",
                 "mqtt_enabled": self._options.mqtt_enabled,
             }
 
@@ -226,7 +257,10 @@ class BusManager:
             with self._lock:
                 for rec in sorted(self._modules.values(), key=lambda r: r.module_id):
                     modules.append(rec.to_dict(include_runtime=True))
-        return {"status": self.status(), "modules": modules}
+        from entity_export import build_entities_snapshot
+
+        entities = build_entities_snapshot(modules)
+        return {"status": self.status(), "modules": modules, "entities": entities}
 
     def list_modules(self) -> list[dict[str, Any]]:
         rows = self._get_engine().list_modules()
@@ -511,6 +545,7 @@ class BusManager:
         bitrate = self._options.can_bitrate
         if iface == CAN_INTERFACE_GS_USB:
             try:
+                _apply_cannectivity_gs_usb_out_ep_patch()
                 self._bus = can.Bus(
                     interface="gs_usb",
                     channel=int(self._options.gsusb_channel),
@@ -870,8 +905,17 @@ class BusManager:
         if not self.ensure_bus():
             return False
         module_id = int(data[0]) if data else 0xFF
-        self._ensure_transport_macs()
-        frames = prepare_outgoing_frames(self._transport, module_id, can_id, data)
+        self._sync_transport_macs_from_engine()
+        module_has_key: bool | None = None
+        if module_id not in UNKNOWN_MODULE_IDS:
+            module_has_key = self._get_engine()._module_has_master_key_for_tx(module_id)  # noqa: SLF001
+        frames = prepare_outgoing_frames(
+            self._transport,
+            module_id,
+            can_id,
+            data,
+            module_has_master_key=module_has_key,
+        )
         if not frames:
             _LOGGER.warning("TX blocked can_id=0x%X module=%s", can_id, module_id)
             return False
@@ -889,6 +933,32 @@ class BusManager:
                 return False
         return True
 
+    def send_ota_data(self, module_id: int, data: list[int]) -> bool:
+        """Send OTA_DATA (0x720) — module_id for Secure TLV, payload is seq+bytes."""
+        if not self.ensure_bus():
+            return False
+        self._sync_transport_macs_from_engine()
+        from protocol_constants import CAN_ID_OTA_DATA
+
+        module_has_key = self._get_engine()._module_has_master_key_for_tx(int(module_id))  # noqa: SLF001
+        frames = prepare_outgoing_frames(
+            self._transport,
+            int(module_id),
+            CAN_ID_OTA_DATA,
+            data,
+            module_has_master_key=module_has_key,
+        )
+        if not frames:
+            return False
+        import can
+
+        for frame_id, frame_data in frames:
+            if not self._send_message(
+                can.Message(arbitration_id=int(frame_id), is_extended_id=True, data=frame_data)
+            ):
+                return False
+        return True
+
     def set_relay_state(self, module_id: int, relay_no: int, state: str) -> dict[str, Any]:
         if not self.ensure_bus():
             return {"ok": False, "error": self._bus_error or "bus not open"}
@@ -901,18 +971,9 @@ class BusManager:
         command: str,
         param: int = 0,
     ) -> dict[str, Any]:
-        cmd = SHUTTER_CMD_MAP.get(str(command).lower())
-        if cmd is None:
-            return {"ok": False, "error": "invalid command"}
-        target = max(0, min(100, int(param)))
-        param_byte = target if cmd == 4 else 0
-        payload = [int(module_id), int(shutter_no), cmd, param_byte, 0, 0, 0, 0]
-        ok = self.send_raw(CAN_ID_SHUTTER_CMD, payload)
-        if ok:
-            deadline = time.time() + 0.45
-            while time.time() < deadline:
-                self.pump_rx(0.05)
-        return {"ok": ok, "module_id": module_id, "shutter_no": shutter_no, "command": command}
+        if not self.ensure_bus():
+            return {"ok": False, "error": self._bus_error or "bus not open"}
+        return self._get_engine().set_shutter_command(module_id, shutter_no, command, param)
 
     def auto_scan_broadcast(self) -> bool:
         return self.send_config(0xFF, COMMAND_GET_SUMMARY)
