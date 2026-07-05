@@ -257,31 +257,77 @@ class ConfiguratorEngine:
                         self._apply_summary_counts(int(mid), response)
                     touched_ids.add(int(mid))
 
+            warnings: list[str] = []
             for module_id in sorted(touched_ids):
                 if module_id in UNKNOWN_MODULE_IDS:
                     continue
-                self._sync_module_master_key_state(module_id)
-                name = self._read_module_name(module_id)
-                if name:
-                    for item in self.discovered_modules:
-                        if item.get("module_id") == module_id:
-                            item["name"] = name
-                            break
-                build = self._read_module_build(module_id)
-                if build:
-                    self.context(module_id).firmware_build = build
+                try:
+                    self._sync_module_master_key_state(module_id)
+                except Exception as err:  # noqa: BLE001
+                    warnings.append(f"ID={module_id} MASTER_KEY state: {err}")
+                try:
+                    name = self._read_module_name(module_id)
+                    if name:
+                        for item in self.discovered_modules:
+                            if item.get("module_id") == module_id:
+                                item["name"] = name
+                                break
+                except Exception as err:  # noqa: BLE001
+                    warnings.append(f"ID={module_id} name: {err}")
+                try:
+                    build = self._read_module_build(module_id)
+                    if build:
+                        self.context(module_id).firmware_build = build
+                except Exception as err:  # noqa: BLE001
+                    warnings.append(f"ID={module_id} build info: {err}")
 
             self._io.sync_transport_macs()
             if touched_ids:
-                self.refresh_all_module_relay_states(passive_timeout_s=1.5, active=True)
+                try:
+                    active_relay_read = self._master_key is not None
+                    self.refresh_all_module_relay_states(
+                        passive_timeout_s=1.5,
+                        active=active_relay_read,
+                    )
+                    if not active_relay_read:
+                        warnings.append(
+                            "Ustaw master_key_hex w konfiguracji dodatku — "
+                            "pominięto aktywny odczyt GPIO/relay (tylko telemetria pasywna)"
+                        )
+                except Exception as err:  # noqa: BLE001
+                    warnings.append(f"Relay refresh: {err}")
+                    _LOGGER.warning("Relay refresh during scan failed: %s", err, exc_info=True)
+
             count = len(self.discovered_modules)
+            if count == 0 and not touched_ids:
+                self._last_scan_status = "error"
+                return {"ok": False, "error": "no modules discovered"}
             self._last_scan_status = "ok"
             self._last_scan_at = time.time()
             self._io.notify()
-            return {"ok": True, "modules_before": before, "modules_after": count, "modules": self.list_modules()}
+            result: dict[str, Any] = {
+                "ok": True,
+                "modules_before": before,
+                "modules_after": count,
+                "modules": self.list_modules(),
+            }
+            if warnings:
+                result["warnings"] = warnings
+                result["partial"] = True
+                _LOGGER.warning("Scan completed with warnings: %s", "; ".join(warnings))
+            return result
         except Exception as err:  # noqa: BLE001
             _LOGGER.error("scan failed: %s", err, exc_info=True)
             self._last_scan_status = "error"
+            if self.discovered_modules:
+                return {
+                    "ok": True,
+                    "partial": True,
+                    "error": str(err),
+                    "modules_after": len(self.discovered_modules),
+                    "modules": self.list_modules(),
+                    "warnings": [str(err)],
+                }
             return {"ok": False, "error": str(err)}
         finally:
             self._io_release()

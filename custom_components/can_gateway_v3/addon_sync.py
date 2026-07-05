@@ -118,13 +118,14 @@ def _sync_module_metadata(coordinator: CanGatewayCoordinator, modules: list[Any]
         )
         coordinator._touch_module_presence(module_id)
 
+        if isinstance(info.button_count, int) and info.button_count > 0:
+            coordinator._ensure_button_entities(module_id, info.button_count)
+        if isinstance(info.shutter_count, int) and info.shutter_count > 0:
+            coordinator._ensure_shutter_entities(module_id, info.shutter_count)
+
         rt = mod.get("runtime")
         if isinstance(rt, dict):
             _apply_runtime_maps(info, rt)
-            if isinstance(info.button_count, int) and info.button_count > 0:
-                coordinator._ensure_button_entities(module_id, info.button_count)
-            if isinstance(info.shutter_count, int) and info.shutter_count > 0:
-                coordinator._ensure_shutter_entities(module_id, info.shutter_count)
             coordinator.prune_switches_mapped_to_any_shutter(module_id)
 
 

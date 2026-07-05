@@ -25,18 +25,37 @@ def _store_path() -> Path:
 def load_store() -> dict[str, Any]:
     path = _store_path()
     if not path.is_file():
-        return {"version": STORE_VERSION, "updated_at": None, "last_scan_at": None, "modules": {}}
+        return {
+            "version": STORE_VERSION,
+            "updated_at": None,
+            "last_scan_at": None,
+            "discovery_version": 0,
+            "modules": {},
+        }
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as err:
         _LOGGER.warning("Could not read module store %s: %s", path, err)
-        return {"version": STORE_VERSION, "updated_at": None, "last_scan_at": None, "modules": {}}
+        return {
+            "version": STORE_VERSION,
+            "updated_at": None,
+            "last_scan_at": None,
+            "discovery_version": 0,
+            "modules": {},
+        }
     if not isinstance(raw, dict):
-        return {"version": STORE_VERSION, "updated_at": None, "last_scan_at": None, "modules": {}}
+        return {
+            "version": STORE_VERSION,
+            "updated_at": None,
+            "last_scan_at": None,
+            "discovery_version": 0,
+            "modules": {},
+        }
     modules = raw.get("modules")
     if not isinstance(modules, dict):
         raw["modules"] = {}
     raw.setdefault("version", STORE_VERSION)
+    raw.setdefault("discovery_version", 0)
     return raw
 
 
@@ -68,10 +87,14 @@ def save_modules(
             continue
         keyed[str(mid)] = mod
     now = time.time()
+    store = load_store()
+    prev_version = int(store.get("discovery_version") or 0)
+    discovery_version = prev_version + 1
     payload = {
         "version": STORE_VERSION,
         "updated_at": now,
         "last_scan_at": last_scan_at if last_scan_at is not None else now,
+        "discovery_version": discovery_version,
         "modules": keyed,
     }
     try:
@@ -92,5 +115,6 @@ def discovery_snapshot(*, scan_status: str | None = None) -> dict[str, Any]:
         "modules": modules,
         "updated_at": store.get("updated_at"),
         "last_scan_at": store.get("last_scan_at"),
+        "discovery_version": int(store.get("discovery_version") or 0),
         "scan_status": scan_status,
     }

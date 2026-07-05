@@ -49,11 +49,22 @@ PY
 }
 
 _reload_custom_components() {
-    if bashio::api.post "core" "services/homeassistant/reload_custom_components" >/dev/null 2>&1; then
-        bashio::log.info "Requested Home Assistant custom components reload"
+    local token="${SUPERVISOR_TOKEN:-}"
+    if [[ -n "${token}" ]]; then
+        if curl -sf -X POST \
+            -H "Authorization: Bearer ${token}" \
+            -H "Content-Type: application/json" \
+            "http://supervisor/core/api/services/homeassistant/reload_custom_components" \
+            -d '{}' >/dev/null 2>&1; then
+            bashio::log.info "Requested Home Assistant custom components reload"
+            return 0
+        fi
+    fi
+    if bashio::api.supervisor POST /core/api/services/homeassistant/reload_custom_components >/dev/null 2>&1; then
+        bashio::log.info "Requested Home Assistant custom components reload (supervisor API)"
         return 0
     fi
-    bashio::log.warning "Could not reload Home Assistant custom components (integration may require HA restart)"
+    bashio::log.warning "Could not reload Home Assistant custom components — restart Home Assistant to load integration updates"
     return 0
 }
 

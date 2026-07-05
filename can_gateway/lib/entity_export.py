@@ -318,6 +318,7 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
     hw_flags = int(rt.get("hw_flags", mod.get("hw_flags") or 0))
     button_count = mod.get("button_count")
     relay_count = mod.get("relay_count")
+    shutter_count = mod.get("shutter_count")
 
     shutter_reserved: set[int] = set()
     for ro, rc in shutter_map.values():
@@ -437,6 +438,29 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
                 device_class="shutter",
             )
         )
+
+    if not shutter_map and isinstance(shutter_count, int) and shutter_count > 0:
+        for shutter_no in range(1, min(28, shutter_count) + 1):
+            uid = f"m{module_id}_shutter{shutter_no}"
+            entities.append(
+                _entity(
+                    platform="cover",
+                    unique_id=uid,
+                    name=f"CAN M{module_id} Shutter {shutter_no}",
+                    module_id=module_id,
+                    value={"position": None, "direction": 0, "direction_text": "stopped"},
+                    attributes={
+                        "module_id": module_id,
+                        "shutter_no": shutter_no,
+                        "relay_open_no": None,
+                        "relay_close_no": None,
+                        "gpio_open_no": None,
+                        "gpio_close_no": None,
+                        "gpio_no": None,
+                    },
+                    device_class="shutter",
+                )
+            )
 
     if isinstance(button_count, int) and button_count > 0:
         for button_no in range(1, min(64, button_count) + 1):

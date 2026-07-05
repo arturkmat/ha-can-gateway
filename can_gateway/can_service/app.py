@@ -97,7 +97,11 @@ def create_app(bus: BusManager) -> web.Application:
         return web.json_response(detail)
 
     async def api_scan(_request: web.Request) -> web.Response:
-        result = await asyncio.to_thread(bus.discovery_scan)
+        try:
+            result = await asyncio.to_thread(bus.discovery_scan)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.error("api_scan error: %s", err, exc_info=True)
+            return web.json_response({"ok": False, "error": str(err)}, status=503)
         status = 200 if result.get("ok") else 503
         return web.json_response(result, status=status)
 
@@ -536,10 +540,16 @@ async def run_server(
     await mqtt.start()
 
     background: list[asyncio.Task] = []
-    if bus.bus_ok:
+    if bus.bus_ok and options.master_key_bytes is not None:
         background.append(asyncio.create_task(_initial_scan(bus)))
-    if options.auto_scan:
+    elif bus.bus_ok:
+        _LOGGER.warning(
+            "Pominięto skan startowy — brak master_key_hex (Ustaw master_key_hex w konfiguracji dodatku)"
+        )
+    if options.auto_scan and options.master_key_bytes is not None:
         background.append(asyncio.create_task(_auto_scan_loop(bus, options.auto_scan_interval_s)))
+    elif options.auto_scan:
+        _LOGGER.warning("auto_scan wyłączony — brak master_key_hex w konfiguracji dodatku")
     background.append(asyncio.create_task(_relay_telemetry_loop(bus)))
 
     try:

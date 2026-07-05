@@ -30,6 +30,7 @@ _LOGGER = logging.getLogger(__name__)
 
 CORE_PLATFORMS = tuple(PLATFORMS)
 POLL_INTERVAL = timedelta(seconds=5)
+DISCOVERY_POLL_INTERVAL = timedelta(seconds=8)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -65,14 +66,46 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinator": coordinator,
         DATA_ADDON_CLIENT: client,
     }
+    last_discovery_version: int | None = None
+
+    async def _apply_snapshot(snapshot: dict) -> None:
+        apply_addon_state(coordinator, snapshot)
+        coordinator.notify_gateway_state()
+        modules = snapshot.get("modules")
+        if isinstance(modules, list) and modules:
+            new_data = dict(entry.data)
+            new_data[CONF_DISCOVERED_MODULES] = [
+                row for row in modules if isinstance(row, dict)
+            ]
+            hass.config_entries.async_update_entry(entry, data=new_data)
 
     async def _poll_state(_now=None) -> None:
         try:
             snapshot = await client.get_state()
-            apply_addon_state(coordinator, snapshot)
-            coordinator.notify_gateway_state()
+            await _apply_snapshot(snapshot)
         except Exception:  # noqa: BLE001
             _LOGGER.debug("Add-on state poll failed", exc_info=True)
+
+    async def _poll_discovery(_now=None) -> None:
+        nonlocal last_discovery_version
+        try:
+            discovery = await client.get_discovery()
+            version = discovery.get("discovery_version")
+            if version is None:
+                return
+            version_int = int(version)
+            if last_discovery_version is not None and version_int == last_discovery_version:
+                return
+            last_discovery_version = version_int
+            _LOGGER.info(
+                "Add-on discovery changed (version=%s, modules=%s)",
+                version_int,
+                discovery.get("module_count"),
+            )
+            snapshot = await client.get_state()
+            await _apply_snapshot(snapshot)
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("Add-on discovery poll failed", exc_info=True)
 
     async def _send_can(can_id: int, data: list[int], ext: bool = False, rtr: bool = False) -> None:
         del ext, rtr
@@ -125,11 +158,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await _poll_state()
 
+    try:
+        initial_discovery = await client.get_discovery()
+        if initial_discovery.get("discovery_version") is not None:
+            last_discovery_version = int(initial_discovery["discovery_version"])
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug("Initial discovery read failed", exc_info=True)
+
     @callback
     def _track_poll(_now) -> None:
         hass.async_create_task(_poll_state())
 
+    @callback
+    def _track_discovery(_now) -> None:
+        hass.async_create_task(_poll_discovery())
+
     entry.async_on_unload(async_track_time_interval(hass, _track_poll, POLL_INTERVAL))
+    entry.async_on_unload(async_track_time_interval(hass, _track_discovery, DISCOVERY_POLL_INTERVAL))
 
     if bool(entry.data.get(CONF_SCAN_ON_SETUP, True)) and not bool(
         entry.data.get(CONF_INITIAL_SCAN_DONE)
@@ -137,16 +182,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         async def _startup_scan() -> None:
             coordinator.mark_scan_started("addon_startup_scan")
+            result: dict = {"ok": False}
             try:
-                await client.discovery_scan()
+                result = await client.discovery_scan()
+                if not result.get("ok"):
+                    _LOGGER.warning(
+                        "Add-on startup scan failed: %s",
+                        result.get("error", result),
+                    )
                 await _poll_state()
-                for module_id in coordinator.get_known_module_ids():
-                    try:
-                        await client.refresh_module(module_id)
-                        await asyncio.sleep(0.35)
-                    except Exception:  # noqa: BLE001
-                        _LOGGER.debug("Add-on refresh module %s failed", module_id, exc_info=True)
-                await _poll_state()
+                await _poll_discovery()
             except Exception:  # noqa: BLE001
                 _LOGGER.warning("Add-on startup scan failed", exc_info=True)
                 coordinator.mark_scan_finished("error", "Add-on startup scan failed")
@@ -156,7 +201,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 new_data[CONF_DISCOVERED_MODULES] = await client.get_modules()
                 hass.config_entries.async_update_entry(entry, data=new_data)
                 coordinator.mark_scan_finished(
-                    "ok",
+                    "ok" if result.get("ok") else "partial",
                     f"Add-on startup scan finished, modules={len(coordinator.scanned_modules)}",
                 )
 

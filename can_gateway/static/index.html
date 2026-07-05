@@ -3,184 +3,44 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CAN Gateway — Konfigurator</title>
+  <title>CAN Gateway — Skan magistrali</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-  <h1>Konfigurator relacji CAN</h1>
-  <p class="sub">CAN Gateway — pełna parytet z konfiguratorem Windows (F5 = skan, encje HA z add-onu).</p>
+  <h1>CAN Gateway</h1>
+  <p class="sub">Skan modułów na magistrali CAN. Encje Home Assistant tworzy integracja <code>can_gateway_v3</code> automatycznie po zapisie wyników.</p>
 
-  <div class="progress-row">
-    <div id="progress-label" class="progress-label">Gotowy</div>
-    <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
+  <div id="key-banner" class="key-banner" hidden></div>
+
+  <div class="card">
+    <h2>Status magistrali</h2>
+    <table><tbody id="conn-status"></tbody></table>
   </div>
-  <div id="lock-banner" class="lock-banner"></div>
 
   <div class="card toolbar">
-    <button id="btn-scan" type="button">Skan F5</button>
-    <button id="btn-refresh" type="button" class="secondary">Odśwież</button>
-    <button id="btn-deep-refresh" type="button" class="secondary" disabled>Deep refresh</button>
-    <button id="btn-reload-tab" type="button" class="secondary" disabled>Przeładuj zakładkę</button>
-    <button id="btn-service" type="button" class="secondary" disabled>⚙ Serwis</button>
+    <button id="btn-scan" type="button">Skanuj magistralę</button>
+    <button id="btn-refresh" type="button" class="secondary">Odśwież listę</button>
+    <span id="scan-status" class="hint"></span>
   </div>
 
-  <div class="tabs">
-    <button type="button" class="tab active" data-tab="connection">1 • Połączenie</button>
-    <button type="button" class="tab" data-tab="modules">2 • Moduły</button>
-    <button type="button" class="tab" data-tab="gpio">3 • GPIO</button>
-    <button type="button" class="tab" data-tab="control">4 • Sterowanie</button>
-    <button type="button" class="tab" data-tab="shutters">5 • Rolety</button>
-    <button type="button" class="tab" data-tab="mapping">6 • Mapowanie</button>
-    <button type="button" class="tab" data-tab="sensors">7 • Sensory</button>
-    <button type="button" class="tab" data-tab="logs">8 • Logi</button>
-  </div>
-
-  <div id="panel-connection" class="panel active">
-    <div class="card">
-      <h2>Połączenie magistrali</h2>
-      <p class="hint">Adapter i MASTER_KEY konfigurujesz w ustawieniach add-onu HA. Tu widać stan na żywo.</p>
-      <table><tbody id="conn-status"></tbody></table>
-    </div>
-    <div class="card">
-      <h2>Ustaw ID po MAC</h2>
-      <div class="row">
-        <input id="set-id-mac" placeholder="MAC (AA:BB:…)" />
-        <input id="set-id-new" type="number" min="1" max="254" placeholder="Nowe ID" />
-        <button id="btn-set-module-id" type="button">Ustaw ID</button>
-      </div>
-    </div>
-  </div>
-
-  <div id="panel-modules" class="panel">
-    <div class="card">
-      <table>
-        <thead><tr><th>ID</th><th>Nazwa</th><th>HW</th><th>MAC</th><th>KEY</th><th>Podsumowanie</th></tr></thead>
-        <tbody id="modules-body"></tbody>
-      </table>
-      <div class="row">
-        <button id="btn-rename" type="button" class="secondary" disabled>Zmień nazwę</button>
-        <button id="btn-identify" type="button" class="secondary" disabled>Identify</button>
-        <button id="btn-reboot" type="button" class="danger" disabled>Restart</button>
-        <button id="btn-ota-read" type="button" class="secondary" disabled>OTA info</button>
-      </div>
-      <div class="row ota-row">
-        <input id="ota-file" type="file" accept=".bin" />
-        <button id="btn-ota-upload" type="button" class="secondary" disabled>Wgraj OTA</button>
-      </div>
-      <pre id="ota-box" class="ota-box" style="display:none"></pre>
-    </div>
-  </div>
-
-  <div id="panel-gpio" class="panel">
-    <div class="card grid2">
-      <div>
-        <p id="pinout-hint" class="hint">Wybierz moduł.</p>
-        <div id="pinout-canvas" class="pinout-canvas"></div>
-      </div>
-      <div>
-        <h2>Czasy przycisków</h2>
-        <div class="row">
-          <label>MultiClick ms <input id="multiclick-ms" type="number" min="100" max="2000" /></label>
-          <label>LongPress ms <input id="longpress-ms" type="number" min="300" max="2550" /></label>
-          <button id="btn-save-timing" type="button" class="secondary">Zapisz</button>
-        </div>
-        <p class="hint">GPIO focus: <input id="gpio-focus" type="number" readonly /></p>
-        <button id="btn-gpio-clear" type="button" class="danger" disabled>Wyczyść wszystkie GPIO</button>
-      </div>
-    </div>
-    <div class="card">
-      <table>
-        <thead><tr><th>GPIO</th><th>Rola</th><th>Idx</th><th>Stan</th><th>Przypisz (role/idx/flags)</th><th></th></tr></thead>
-        <tbody id="gpio-body"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <div id="panel-control" class="panel">
-    <div class="card"><h2>Przekaźniki</h2><div id="relays-box"></div></div>
-  </div>
-
-  <div id="panel-shutters" class="panel">
-    <div class="card">
-      <h2>Konfiguracja rolet</h2>
-      <div class="row">
-        <label>Slot <input id="shutter-slot" type="number" min="1" max="8" value="1" /></label>
-        <label>Relay OPEN <input id="shutter-open-relay" type="number" min="0" /></label>
-        <label>Relay CLOSE <input id="shutter-close-relay" type="number" min="0" /></label>
-        <label>Czas otw. [s] <input id="shutter-open-s" type="number" step="0.1" /></label>
-        <label>Czas zam. [s] <input id="shutter-close-s" type="number" step="0.1" /></label>
-        <button id="btn-save-shutter-cfg" type="button">Zapisz parę</button>
-      </div>
-      <table>
-        <thead><tr><th>Roleta</th><th>Open</th><th>Close</th><th>Poz.</th><th>Sterowanie</th><th>Pozycja %</th></tr></thead>
-        <tbody id="shutters-body"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <div id="panel-mapping" class="panel">
-    <div class="card">
-      <h2>Dodaj mapowanie</h2>
-      <div class="row">
-        <input id="map-btn" type="number" min="1" placeholder="Przycisk #" />
-        <select id="map-action"></select>
-        <input id="map-target-id" type="number" placeholder="Moduł docel." />
-        <input id="map-relay" type="number" placeholder="Relay #" />
-        <select id="map-state"></select>
-        <button id="btn-mapping-add" type="button" class="secondary">Dodaj do listy</button>
-      </div>
-      <div class="row">
-        <button id="btn-mapping-send" type="button" disabled>Wyślij do modułu</button>
-        <button id="btn-mapping-clear" type="button" class="danger" disabled>Wyczyść wszystko</button>
-      </div>
-      <table>
-        <thead><tr><th>Przycisk</th><th>Akcja</th><th>Odbiorca</th><th>Moduł</th><th>Typ</th><th>Cel</th><th>Stan</th></tr></thead>
-        <tbody id="mapping-body"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <div id="panel-sensors" class="panel">
-    <div class="card">
-      <div class="row">
-        <button id="btn-scan-1wire" type="button" class="secondary">Skan 1-Wire</button>
-        <button id="btn-scan-i2c" type="button" class="secondary">Skan I2C</button>
-        <button id="btn-scan-sensors" type="button" class="secondary">Skan sensorów</button>
-        <button id="btn-scan-mcp" type="button" class="secondary">Skan MCP23017</button>
-      </div>
-      <table>
-        <thead><tr><th>#</th><th>Typ</th><th>Dane</th></tr></thead>
-        <tbody id="sensors-body"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <div id="panel-logs" class="panel">
-    <div class="card">
-      <button id="btn-clear-log" type="button" class="secondary">Wyczyść</button>
-      <pre id="log-box"></pre>
-    </div>
-  </div>
-
-  <div id="service-modal" class="modal">
-    <div class="modal-inner card">
-      <h2>Panel serwisowy — moduł <span id="svc-module-id">?</span></h2>
-      <p id="svc-key-status" class="hint">…</p>
-      <label>MASTER_KEY hex (64 zn., puste = z add-onu)
-        <input id="svc-master-key" type="password" placeholder="64 znaki hex" />
-      </label>
-      <div class="row">
-        <button id="btn-provision-key" type="button">Wyślij MASTER_KEY</button>
-        <button id="btn-service-close" type="button" class="secondary">Zamknij</button>
-      </div>
-    </div>
+  <div class="card">
+    <h2>Wykryte moduły</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Typ (HW)</th>
+          <th>Nazwa</th>
+          <th>MAC</th>
+          <th>Ostatni skan</th>
+        </tr>
+      </thead>
+      <tbody id="modules-body"></tbody>
+    </table>
+    <p id="modules-empty" class="hint">Brak modułów — uruchom skan magistrali.</p>
   </div>
 
   <footer class="footer-bar"><span id="footer-status">Ładowanie…</span></footer>
-  <script>
-    document.getElementById("map-action").innerHTML = ["Jednoklik","Dwuklik","Trojklik","Czteroklik","Piecioklik","Dlugie nacisniecie"].map(a=>`<option>${a}</option>`).join("");
-    document.getElementById("map-state").innerHTML = ["Wylacz","Zalacz","Przelacz"].map(a=>`<option>${a}</option>`).join("");
-  </script>
   <script src="/static/app.js"></script>
 </body>
 </html>

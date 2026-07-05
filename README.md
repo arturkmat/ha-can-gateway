@@ -4,7 +4,7 @@ Jedno repozytorium dla całego stacku Home Assistant CAN Gateway:
 
 | Ścieżka | Opis |
 |---------|------|
-| `can_gateway/` | Dodatek Supervisor **v0.6.0** (USB-CAN, panel Ingress, REST API) |
+| `can_gateway/` | Dodatek Supervisor **v0.6.1** (USB-CAN, panel skanu, REST API) |
 | `can_gateway/integration/can_gateway_v3/` | Integracja bundlowana w dodatku (auto-deploy przy starcie) |
 | `custom_components/can_gateway_v3/` | Ta sama integracja w korzeniu — **HACS** i ręczna instalacja |
 | `hacs.json` | Manifest HACS (integracja z tego repo) |
@@ -16,12 +16,18 @@ Firmware, konfigurator Windows i dokumentacja protokołu CAN: [can-control-suite
 
 1. **Ustawienia → Dodatki → Sklep dodatków → ⋮ → Repozytoria**
 2. Dodaj: `https://github.com/arturkmat/ha-can-gateway`
-3. Odśwież sklep, zainstaluj **CAN Gateway**, ustaw `can_port` / `can_bitrate`, uruchom dodatek.
+3. Odśwież sklep, zainstaluj **CAN Gateway**, ustaw `can_port`, `can_bitrate` (**125000**) oraz `master_key_hex` (64 znaki hex), uruchom dodatek.
 4. **Gotowe** — dodatek kopiuje `can_gateway_v3` do `/config/custom_components/`, przeładowuje custom components i wysyła discovery Supervisor; HA tworzy wpis integracji automatycznie (`connection_mode=addon`).
 
-Panel: **Ustawienia → Dodatki → CAN Gateway → Otwórz panel web** (Ingress) lub REST na porcie `8099`.
+Panel: **Ustawienia → Dodatki → CAN Gateway → Otwórz panel web** — tylko **Skanuj magistralę** i lista modułów. Encje w HA pojawiają się automatycznie (integracja nasłuchuje `/api/discovery`).
 
-Opcjonalnie: w panelu **Skanuj magistralę** (`POST /api/scan`) — moduły w `/data/modules.json`.
+### Kroki użytkownika (Secure CAN)
+
+1. W ustawieniach dodatku ustaw **`master_key_hex`** (64 znaki hex — ten sam co w konfiguratorze Windows).
+2. Ustaw **`can_bitrate`: 125000** (protokół CAN v2).
+3. Otwórz panel dodatku → **Skanuj magistralę**.
+4. Sprawdź **Ustawienia → Urządzenia i usługi → CAN Gateway v3** — encje switch/cover/sensor powinny pojawić się w ciągu ~10 s (poll discovery).
+5. Jeśli integracja nie przeładowała się po aktualizacji dodatku: **Ustawienia → System → Urządzenia i usługi → ⋮ → Przeładuj konfigurację YAML** lub restart HA.
 
 ## Instalacja integracji (HACS / direct serial)
 
@@ -39,7 +45,7 @@ Ręcznie: skopiuj `custom_components/can_gateway_v3` → `<config>/custom_compon
 | Metoda | Endpoint | Opis |
 |--------|----------|------|
 | GET | `/api/health` | Health check |
-| GET | `/api/discovery` | Zapisane moduły + metadane skanu |
+| GET | `/api/discovery` | Zapisane moduły + `discovery_version` (poll integracji) |
 | GET | `/api/modules` | Pełna lista modułów |
 | POST | `/api/scan` | Skan magistrali + zapis do `/data` |
 | GET | `/api/state` | Snapshot dla integracji v3 |

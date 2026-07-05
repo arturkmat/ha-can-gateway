@@ -228,6 +228,9 @@ class BusManager:
 
     def status(self) -> dict[str, Any]:
         with self._lock:
+            master_ok = self._options.master_key_bytes is not None
+            master_hex = self._options.master_key_hex.strip()
+            master_invalid = bool(master_hex) and not master_ok
             return {
                 "bus_ok": self.bus_ok,
                 "bus_error": self._bus_error,
@@ -237,10 +240,17 @@ class BusManager:
                 "gsusb_channel": self._options.gsusb_channel,
                 "can_bitrate": self._options.can_bitrate,
                 "secure_enabled": self._transport is not None,
+                "master_key_configured": master_ok,
+                "master_key_invalid": master_invalid,
+                "master_key_required_hint": (
+                    None
+                    if master_ok
+                    else "Ustaw master_key_hex w konfiguracji dodatku (64 znaki hex) dla modułów Secure CAN"
+                ),
                 "module_count": len(self._modules),
                 "last_scan_status": self._last_scan_status,
                 "last_scan_at": self._last_scan_at,
-                "version": "0.5.1",
+                "version": "0.6.1",
                 "mqtt_enabled": self._options.mqtt_enabled,
             }
 
@@ -1057,19 +1067,31 @@ class BusManager:
         if not self.ensure_bus():
             self._last_scan_status = "error"
             return {"ok": False, "error": self._bus_error or "bus not open"}
-        result = self._get_engine().scan_modules_sync()
+        try:
+            result = self._get_engine().scan_modules_sync()
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.error("discovery_scan failed: %s", err, exc_info=True)
+            self._last_scan_status = "error"
+            return {"ok": False, "error": str(err)}
         self._sync_transport_macs_from_engine()
         scan_at: float | None = None
         if result.get("ok"):
-            self.refresh_relay_telemetry(0.8)
-            for rec in self._get_engine().list_modules():
-                mid = int(rec["module_id"])
-                try:
-                    _refresh_module_deep_impl(self, mid)
-                except Exception:  # noqa: BLE001
-                    _LOGGER.debug("Deep refresh module %s failed", mid, exc_info=True)
+            try:
+                self.refresh_relay_telemetry(0.8)
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("Post-scan relay telemetry failed", exc_info=True)
+            if self._options.master_key_bytes is not None:
+                for rec in self._get_engine().list_modules():
+                    mid = int(rec["module_id"])
+                    try:
+                        _refresh_module_deep_impl(self, mid)
+                    except Exception:  # noqa: BLE001
+                        _LOGGER.debug("Deep refresh module %s failed", mid, exc_info=True)
             scan_at = time.time()
-            self.persist_discovery_state(last_scan_at=scan_at)
+            try:
+                self.persist_discovery_state(last_scan_at=scan_at)
+            except Exception:  # noqa: BLE001
+                _LOGGER.warning("Could not persist discovery state", exc_info=True)
         with self._lock:
             self._last_scan_status = "ok" if result.get("ok") else "error"
             if result.get("ok"):
@@ -1077,4 +1099,6 @@ class BusManager:
         modules = self.list_modules()
         result["module_count"] = len(modules)
         result["modules"] = modules
+        store = discovery_snapshot(scan_status=self._last_scan_status)
+        result["discovery_version"] = store.get("discovery_version")
         return result

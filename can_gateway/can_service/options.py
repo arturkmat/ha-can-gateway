@@ -48,7 +48,7 @@ def load_options() -> AddonOptions:
         can_interface=str(raw.get("can_interface", CAN_INTERFACE_SLCAN)).strip().lower(),
         can_port=str(raw.get("can_port", "/dev/ttyACM0")),
         gsusb_channel=int(raw.get("gsusb_channel", 0)),
-        can_bitrate=int(raw.get("can_bitrate", 250000)),
+        can_bitrate=int(raw.get("can_bitrate", 125000)),
         tty_baudrate=int(raw.get("tty_baudrate", 115200)),
         master_key_hex=str(raw.get("master_key_hex", "")),
         auto_scan=bool(raw.get("auto_scan", True)),
