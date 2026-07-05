@@ -19,7 +19,7 @@ Optional: open the Ingress panel and run **Scan bus** to populate `/data/modules
 
 ## Manual integration setup
 
-If you run Home Assistant without Supervisor, install `custom_components/can_gateway_v3` from [can-control-suite](https://github.com/arturkmat/can-control-suite) and add the integration manually (direct serial or remote add-on URL).
+If you run Home Assistant without Supervisor, install `custom_components/can_gateway_v3` from the same repo root (HACS or manual copy) and add the integration manually (direct serial or remote add-on URL).
 
 ## API (port 8099)
 
@@ -36,10 +36,10 @@ If you run Home Assistant without Supervisor, install `custom_components/can_gat
 
 ```
 can_gateway/
-  integration/can_gateway_v3/   # bundled HA integration (synced from monorepo custom_components)
+  integration/can_gateway_v3/   # bundled HA integration (sync from repo custom_components/)
   deploy_integration.sh         # copy + reload on start
   discovery.sh                  # Supervisor discovery for auto config entry
   can_service/                  # REST API + CAN bridge
 ```
 
-Source of truth for integration code: `custom_components/can_gateway_v3/` in [can-control-suite](https://github.com/arturkmat/can-control-suite).
+Source of truth for integration code: `custom_components/can_gateway_v3/` in [ha-can-gateway](https://github.com/arturkmat/ha-can-gateway) (sync with `tools/sync_addon_integration.ps1`).

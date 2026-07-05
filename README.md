@@ -1,34 +1,40 @@
-# CAN Gateway — dodatek Home Assistant Supervisor
+# CAN Gateway — Home Assistant (add-on + integracja)
 
-Repozytorium zawiera **tylko** dodatek Supervisor (`can_gateway/` v0.5.1): USB-CAN (SLCAN / gs_usb), panel Ingress i REST API.
+Jedno repozytorium dla całego stacku Home Assistant CAN Gateway:
 
-Integracja encji **CAN Gateway v3** jest w osobnym repozytorium: [can-control-suite](https://github.com/arturkmat/can-control-suite) (`custom_components/can_gateway_v3` lub HACS).
+| Ścieżka | Opis |
+|---------|------|
+| `can_gateway/` | Dodatek Supervisor **v0.6.0** (USB-CAN, panel Ingress, REST API) |
+| `can_gateway/integration/can_gateway_v3/` | Integracja bundlowana w dodatku (auto-deploy przy starcie) |
+| `custom_components/can_gateway_v3/` | Ta sama integracja w korzeniu — **HACS** i ręczna instalacja |
+| `hacs.json` | Manifest HACS (integracja z tego repo) |
+| `repository.yaml` | Manifest sklepu dodatków Supervisor |
 
-## Instalacja dodatku (Home Assistant OS / Supervised)
+Firmware, konfigurator Windows i dokumentacja protokołu CAN: [can-control-suite](https://github.com/arturkmat/can-control-suite).
+
+## Instalacja (Home Assistant OS / Supervised) — zalecane
 
 1. **Ustawienia → Dodatki → Sklep dodatków → ⋮ → Repozytoria**
-2. Dodaj URL (musi być pełny adres GitHub, **nie** ścieżka katalogu):
-   `https://github.com/arturkmat/ha-can-gateway`
-3. Odśwież sklep dodatków.
-4. Zainstaluj **CAN Gateway**, skonfiguruj port USB (`can_port`, `can_bitrate`, opcjonalnie `master_key_hex`) i uruchom dodatek.
+2. Dodaj: `https://github.com/arturkmat/ha-can-gateway`
+3. Odśwież sklep, zainstaluj **CAN Gateway**, ustaw `can_port` / `can_bitrate`, uruchom dodatek.
+4. **Gotowe** — dodatek kopiuje `can_gateway_v3` do `/config/custom_components/`, przeładowuje custom components i wysyła discovery Supervisor; HA tworzy wpis integracji automatycznie (`connection_mode=addon`).
 
 Panel: **Ustawienia → Dodatki → CAN Gateway → Otwórz panel web** (Ingress) lub REST na porcie `8099`.
 
-### Repo prywatne
+Opcjonalnie: w panelu **Skanuj magistralę** (`POST /api/scan`) — moduły w `/data/modules.json`.
 
-Supervisor nie klonuje prywatnego GitHub bez tokenu. Opcje: Samba → `/addons/can_gateway/` (lokalnie) albo tymczasowo repo **Public** (bez sekretów w historii).
+## Instalacja integracji (HACS / direct serial)
 
-## Workflow v3.3 (dodatek + integracja v3)
+Bez Supervisor lub gdy chcesz tylko integrację (port SLCAN w HA Core):
 
-1. Zainstaluj dodatek z tego repozytorium (kroki powyżej).
-2. W panelu dodatku kliknij **Skanuj magistralę** (`POST /api/scan`). Moduły trafiają do `/data/modules.json` (metadane, FW, GPIO, rolety, relay).
-3. Z [can-control-suite](https://github.com/arturkmat/can-control-suite) zainstaluj integrację **`can_gateway_v3`**:
-   - HACS: dodaj repo `https://github.com/arturkmat/can-control-suite`, pobierz integrację **CAN Gateway v3**, **lub**
-   - ręcznie: skopiuj `home_assistant/custom_components/can_gateway_v3` → `/config/custom_components/`.
-4. Zrestartuj Home Assistant.
-5. **Ustawienia → Urządzenia i usługi → Dodaj integrację → CAN Gateway v3** → połączenie **Add-on** (nie otwiera USB w Core — stany przez `/api/state` co ~5 s).
+1. **HACS → Integracje → ⋮ → Własne repozytoria**
+2. URL: `https://github.com/arturkmat/ha-can-gateway`, kategoria: **Integracja**
+3. Pobierz **CAN Gateway v3**, zrestartuj HA.
+4. **Ustawienia → Urządzenia i usługi → Dodaj integrację → CAN Gateway v3** — tryb **direct serial** lub **add-on** (jeśli dodatek działa na innym hoście).
 
-### API dodatku (skrót)
+Ręcznie: skopiuj `custom_components/can_gateway_v3` → `<config>/custom_components/`.
+
+## API dodatku (skrót)
 
 | Metoda | Endpoint | Opis |
 |--------|----------|------|
@@ -39,9 +45,20 @@ Supervisor nie klonuje prywatnego GitHub bez tokenu. Opcje: Samba → `/addons/c
 | GET | `/api/state` | Snapshot dla integracji v3 |
 | POST | `/api/can/send` | TX CAN (usługi v3 w trybie add-on) |
 
-## Integracja (encje, usługi, automatyzacje)
+Szczegóły encji, usług i migracji v2→v3: [can-control-suite/home_assistant/README.md](https://github.com/arturkmat/can-control-suite/blob/main/home_assistant/README.md) (dokumentacja protokołu i legacy v2).
 
-Dokumentacja platform, usług (`identify`, OTA, relay-link, LED bindings) i migracji v2→v3:  
-[home_assistant/README.md w can-control-suite](https://github.com/arturkmat/can-control-suite/blob/main/home_assistant/README.md)
+## Sync integracji (dla deweloperów)
 
-**Nie** dodawaj URL `can-control-suite` w **Repozytoriach sklepu dodatków** — to repo jest pod HACS / integrację, nie pod strukturę Supervisor add-on.
+Po edycji `custom_components/can_gateway_v3/`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\sync_addon_integration.ps1
+```
+
+Kopiuje pliki do `can_gateway/integration/can_gateway_v3/` przed commitem / publikacją dodatku.
+
+## Testy
+
+```powershell
+python -m pytest tests/
+```

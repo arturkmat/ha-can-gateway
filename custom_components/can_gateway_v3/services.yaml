@@ -1,0 +1,555 @@
+identify:
+  name: Identify module
+  description: Blink onboard identify LED on a CAN module (CONFIG_CMD_IDENTIFY).
+  fields:
+    module_id:
+      name: Module ID
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 254
+          mode: box
+    duration_s:
+      name: Duration (seconds)
+      required: false
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 120
+          mode: box
+
+set_relay_state:
+  name: Set relay state
+  description: Send SET_RELAY_STATE (59) to a module.
+  fields:
+    module_id:
+      name: Module ID
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 254
+          mode: box
+    relay_no:
+      name: Relay number
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 255
+          mode: box
+    state:
+      name: State
+      required: false
+      default: toggle
+      selector:
+        select:
+          options:
+            - off
+            - on
+            - toggle
+
+shutter_command:
+  name: Shutter command
+  description: Send V2_CTRL_SHUTTER_CMD via CONTROL_COMMAND class.
+  fields:
+    module_id:
+      name: Module ID
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 254
+          mode: box
+    shutter_no:
+      name: Shutter index
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 28
+          mode: box
+    command:
+      name: Command
+      required: true
+      selector:
+        select:
+          options:
+            - open
+            - close
+            - stop
+            - set_position
+    position:
+      name: Target position (%)
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 100
+          mode: slider
+
+set_led_effect:
+  name: Set LED effect
+  description: Send SET_LED_EFFECT (111) to a WS2812B/CCT strip.
+  fields:
+    module_id:
+      name: Module ID
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 254
+          mode: box
+    strip_index:
+      name: Strip index (1-4)
+      required: false
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 4
+          mode: box
+    effect_id:
+      name: Effect ID (0=off, 1=solid, 2=rainbow, 3=chase, 4=breathe)
+      required: false
+      default: 1
+      selector:
+        number:
+          min: 0
+          max: 5
+          mode: box
+    duration_s:
+      name: Duration (seconds, 0=idle persist)
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 255
+          mode: box
+    strip_type:
+      name: Strip type (0=RGB, 1=CCT)
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 1
+          mode: box
+    red:
+      name: Red (RGB) or warm (CCT)
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 255
+          mode: box
+    green:
+      name: Green
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 255
+          mode: box
+    blue:
+      name: Blue
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 255
+          mode: box
+    kelvin:
+      name: Color temperature (K, CCT strips)
+      required: false
+      selector:
+        number:
+          min: 2700
+          max: 6500
+          mode: box
+
+set_relay_link:
+  name: Set relay link
+  description: >
+    Add or update relay-to-relay link (CONFIG 116). Use target_state off/on/toggle,
+    target_state_code (0-255) for raw wire value, or timed_minutes (1-127) for timed ON
+    (wire 128+minutes). Mirror trigger ignores target state.
+  fields:
+    module_id:
+      name: Module ID
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 254
+          mode: box
+    src_relay:
+      name: Source relay number
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 255
+          mode: box
+    target_module_id:
+      name: Target module ID
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 254
+          mode: box
+    target_relay:
+      name: Target relay number
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 255
+          mode: box
+    trigger:
+      name: Trigger
+      required: false
+      default: any
+      selector:
+        select:
+          options:
+            - on
+            - off
+            - any
+            - mirror
+    target_state:
+      name: Target state (ignored for mirror)
+      required: false
+      default: toggle
+      selector:
+        select:
+          options:
+            - off
+            - on
+            - toggle
+    target_state_code:
+      name: Raw target_state byte (0-255, overrides target_state)
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 255
+          mode: box
+    timed_minutes:
+      name: Timed ON minutes (1-127, wire 128+minutes)
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 127
+          mode: box
+
+clear_relay_links:
+  name: Clear relay links
+  description: Remove all relay links on a module (CONFIG 117).
+  fields:
+    module_id:
+      name: Module ID
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 254
+          mode: box
+
+set_relay_bind_route:
+  name: Set relay bind route
+  description: >
+    Button to remote relay route on source module (CONFIG 85). Writes on the controlling
+    module; firmware emits 0x102 to target. Supports timed_minutes or relay_state_code.
+  fields:
+    module_id:
+      name: Source module ID (controller)
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 254
+          mode: box
+    button:
+      name: Button number
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 64
+          mode: box
+    target_module_id:
+      name: Target module ID (executor)
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 254
+          mode: box
+    relay:
+      name: Target relay number
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 255
+          mode: box
+    action:
+      name: Button action
+      required: false
+      default: single
+      selector:
+        select:
+          options:
+            - single
+            - double
+            - triple
+            - quad
+            - quint
+            - long
+    relay_state:
+      name: Relay state
+      required: false
+      default: on
+      selector:
+        select:
+          options:
+            - off
+            - on
+            - toggle
+    relay_state_code:
+      name: Raw relay_state byte (0-255)
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 255
+          mode: box
+    timed_minutes:
+      name: Timed ON minutes (1-127)
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 127
+          mode: box
+
+clear_relay_bind_routes:
+  name: Clear relay bind routes
+  description: Remove all button→remote-relay routes (CONFIG 86) on a module.
+  fields:
+    module_id:
+      name: Module ID
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 254
+          mode: box
+
+set_led_binding:
+  name: Set LED binding
+  description: Map button action to LED strip effect (CONFIG 112) on LED module.
+  fields:
+    module_id:
+      name: LED module ID
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 254
+          mode: box
+    source_module_id:
+      name: Source module ID (button owner)
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 254
+          mode: box
+    button:
+      name: Button number
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 64
+          mode: box
+    strip_index:
+      name: Strip index (1-4)
+      required: false
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 4
+          mode: box
+    action:
+      name: Button action
+      required: false
+      default: single
+      selector:
+        select:
+          options:
+            - single
+            - double
+            - triple
+            - quad
+            - quint
+            - long
+    effect_id:
+      name: Effect ID
+      required: false
+      default: 1
+      selector:
+        number:
+          min: 0
+          max: 5
+          mode: box
+    duration_s:
+      name: Effect duration (seconds)
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 255
+          mode: box
+    strip_type:
+      name: Strip type (0=RGB, 1=CCT)
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 1
+          mode: box
+    red:
+      name: Red
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 255
+          mode: box
+    green:
+      name: Green
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 255
+          mode: box
+    blue:
+      name: Blue
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 255
+          mode: box
+    kelvin:
+      name: Color temperature (K, CCT)
+      required: false
+      selector:
+        number:
+          min: 2700
+          max: 6500
+          mode: box
+
+clear_led_bindings:
+  name: Clear LED bindings
+  description: Remove all LED bindings on a module (CONFIG 113).
+  fields:
+    module_id:
+      name: Module ID
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 254
+          mode: box
+
+start_can_ota:
+  name: Start CAN OTA
+  description: >
+    Upload firmware binary over CAN (CONFIG 60-64 + OTA_DATA). Path must be readable by
+    Home Assistant host. Blocks until complete or error; avoid concurrent CAN config.
+  fields:
+    module_id:
+      name: Target module ID
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 254
+          mode: box
+    firmware_path:
+      name: Absolute path to .bin firmware
+      required: true
+      example: /config/firmware/module.bin
+      selector:
+        text:
+
+enable_ble_ota:
+  name: Enable BLE OTA window
+  description: >
+    Open BLE OTA service window via CONFIG 103. Does NOT upload firmware — use
+    tools/ble_ota_flash.py or konfigurator after enabling. May return UNSUPPORTED on
+    boards without BLE stack.
+  fields:
+    module_id:
+      name: Module ID
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 254
+          mode: box
+    enable:
+      name: Enable BLE OTA
+      required: false
+      default: true
+      selector:
+        boolean:
+    timeout_min:
+      name: Window timeout (minutes)
+      required: false
+      default: 30
+      selector:
+        number:
+          min: 1
+          max: 120
+          mode: box
+    erase_nvs:
+      name: Erase NVS before BLE OTA
+      required: false
+      default: false
+      selector:
+        boolean:
+
+set_ble_ota_pin:
+  name: Set BLE OTA PIN
+  description: >
+    Configure BLE OTA install PIN (CONFIG 104, 4-8 ASCII digits). Empty pin clears.
+    Firmware upload still requires external BLE client.
+  fields:
+    module_id:
+      name: Module ID
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 254
+          mode: box
+    pin:
+      name: PIN (empty to clear)
+      required: false
+      default: ""
+      selector:
+        text:
