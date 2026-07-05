@@ -6,7 +6,11 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from configurator_engine import ConfiguratorEngine
-from protocol_constants import CAN_ID_CONFIG_REQUEST, UNKNOWN_MODULE_IDS
+from protocol_constants import (
+    CAN_V2_CLASS_CONFIG_REQUEST,
+    UNKNOWN_MODULE_IDS,
+    can_v2_frame_class,
+)
 
 from .can_send import prepare_outgoing_frames
 from .mapping_service import read_all_mappings
@@ -37,7 +41,7 @@ class _BusIoAdapter:
         if len(payload) < 8:
             payload.extend([0] * (8 - len(payload)))
         if not self._bus._send_message(  # noqa: SLF001
-            can.Message(arbitration_id=int(frame_id), is_extended_id=True, data=payload)
+            can.Message(arbitration_id=int(frame_id), is_extended_id=False, data=payload)
         ):
             raise RuntimeError("CAN send failed")
 
@@ -45,7 +49,7 @@ class _BusIoAdapter:
         self, target_module_id: int, can_id: int, data: list[int], *, log_traffic: bool = True
     ) -> None:
         del log_traffic, target_module_id
-        if can_id == CAN_ID_CONFIG_REQUEST:
+        if can_v2_frame_class(can_id) == CAN_V2_CLASS_CONFIG_REQUEST:
             module_id = int(data[0]) if data else 0xFF
             command = int(data[1]) if len(data) > 1 else 0
             args = [int(b) for b in data[2:8]]

@@ -7,20 +7,30 @@ from typing import TYPE_CHECKING, Any
 
 from protocol_constants import (
     ACTION_MAP,
+    BIND_RELAY_STATE_TIMED_MIN,
     COMMAND_CLEAR_BINARY_BIND_ROUTES,
     COMMAND_CLEAR_BINDING_ROUTES,
+    COMMAND_CLEAR_LED_BINDINGS,
     COMMAND_CLEAR_MAPPINGS,
     COMMAND_CLEAR_RELAY_BIND_ROUTES,
+    COMMAND_CLEAR_RELAY_LINKS,
     COMMAND_CLEAR_SENSOR_BIND_ROUTES,
     COMMAND_CLEAR_SHUTTER_BIND_ROUTES,
     COMMAND_CLEAR_SHUTTER_MAPPINGS,
     COMMAND_SET_BINDING_ROUTE,
     COMMAND_SET_BINARY_BIND_ROUTE,
+    COMMAND_SET_LED_BINDING,
     COMMAND_SET_MAPPING,
     COMMAND_SET_RELAY_BIND_ROUTE,
+    COMMAND_SET_RELAY_LINK,
     COMMAND_SET_SENSOR_BIND_ROUTE,
     COMMAND_SET_SHUTTER_BIND_ROUTE,
     COMMAND_SET_SHUTTER_MAPPING,
+    RELAY_LINK_TRIGGER_MIRROR,
+    pack_set_led_binding_args,
+    pack_set_relay_bind_route_args,
+    pack_set_relay_link_args,
+    parse_binding_state_label,
     STATE_MAP,
     UNKNOWN_MODULE_IDS,
 )
@@ -132,7 +142,7 @@ def send_mappings(bus: BusManager, module_id: int, rows: list[dict[str, Any]]) -
         if str(r.get("kind", "button_relay")) in ("button_relay", "button_shutter", "relay")
     )
     if has_relay_links:
-        bus.send_config_and_wait(mid, COMMAND_CLEAR_RELAY_BIND_ROUTES, timeout=0.5)
+        bus.send_config_and_wait(mid, COMMAND_CLEAR_RELAY_LINKS, timeout=0.5)
     if needs_routes:
         bus.send_config_and_wait(mid, COMMAND_CLEAR_BINDING_ROUTES, timeout=0.5)
 
@@ -147,18 +157,83 @@ def send_mappings(bus: BusManager, module_id: int, rows: list[dict[str, Any]]) -
         try:
             if kind in ("relay_link", "link relay", "relay link"):
                 src_relay = int(row.get("source_relay", row.get("relay_num", 0)))
+                trigger = int(row.get("trigger", row.get("trigger_kind", RELAY_LINK_TRIGGER_ANY)))
                 tgt_mod = int(row.get("target_module_id", mid))
                 tgt_relay = int(row.get("target_relay", row.get("relay_num_target", 0)))
+                tgt_state = int(row.get("target_state", row.get("state", 2)))
+                if trigger != RELAY_LINK_TRIGGER_MIRROR:
+                    state_label = str(row.get("state_label", row.get("state", "")))
+                    if state_label and not str(row.get("target_state", "")).isdigit():
+                        tgt_state, timed_min = parse_binding_state_label(state_label)
+                        if timed_min > 0:
+                            tgt_state = BIND_RELAY_STATE_TIMED_MIN + timed_min
                 resp = bus.send_config_and_wait(
                     mid,
-                    COMMAND_SET_RELAY_BIND_ROUTE,
-                    [src_relay, tgt_mod, tgt_relay],
+                    COMMAND_SET_RELAY_LINK,
+                    pack_set_relay_link_args(src_relay, trigger, tgt_mod, tgt_relay, tgt_state),
                     timeout=0.8,
                 )
                 if resp and len(resp) >= 3 and int(resp[2]) == 0:
                     applied += 1
                 else:
                     errors.append(f"relay_link R{src_relay}")
+                continue
+
+            if kind in ("relay_bind_route", "relay bind route", "button_relay_route"):
+                btn = int(row.get("button_num", row.get("button", 1)))
+                act = _action_code(row.get("action_code", row.get("action", 1)))
+                tgt_mod = int(row.get("target_module_id", mid))
+                relay = int(row.get("relay_num", row.get("relay", 1)))
+                st_label = str(row.get("relay_state", row.get("state", "on")))
+                relay_state, timed_min = parse_binding_state_label(st_label)
+                if timed_min > 0:
+                    relay_state = BIND_RELAY_STATE_TIMED_MIN + timed_min
+                resp = bus.send_config_and_wait(
+                    mid,
+                    COMMAND_SET_RELAY_BIND_ROUTE,
+                    pack_set_relay_bind_route_args(btn, act, tgt_mod, relay, relay_state),
+                    timeout=0.8,
+                )
+                if resp and len(resp) >= 3 and int(resp[2]) == 0:
+                    applied += 1
+                else:
+                    errors.append(f"relay_bind_route btn{btn}")
+                continue
+
+            if kind in ("led_binding", "led bind", "led strip binding"):
+                src_mod = int(row.get("source_module_id", mid))
+                btn = int(row.get("button_num", row.get("button", 1)))
+                act = _action_code(row.get("action_code", row.get("action", 1)))
+                strip_index = int(row.get("strip_index", 1))
+                effect_id = int(row.get("effect_id", 1))
+                duration_s = int(row.get("duration_s", 0))
+                r = int(row.get("red", 255))
+                g = int(row.get("green", 255))
+                b = int(row.get("blue", 255))
+                strip_type = int(row.get("strip_type", 0))
+                kelvin = row.get("kelvin")
+                resp = bus.send_config_and_wait(
+                    int(row.get("led_module_id", mid)),
+                    COMMAND_SET_LED_BINDING,
+                    pack_set_led_binding_args(
+                        src_mod,
+                        btn,
+                        act,
+                        effect_id,
+                        duration_s,
+                        r,
+                        g,
+                        b,
+                        strip_index=strip_index,
+                        strip_type=strip_type,
+                        kelvin=int(kelvin) if kelvin is not None else None,
+                    ),
+                    timeout=0.8,
+                )
+                if resp and len(resp) >= 3 and int(resp[2]) == 0:
+                    applied += 1
+                else:
+                    errors.append(f"led_binding btn{btn}")
                 continue
 
             if kind == "binary_route":
@@ -255,6 +330,8 @@ def clear_mappings(bus: BusManager, module_id: int) -> dict[str, Any]:
     bus.send_config_and_wait(mid, COMMAND_CLEAR_MAPPINGS, timeout=1.0)
     bus.send_config_and_wait(mid, COMMAND_CLEAR_SHUTTER_MAPPINGS, timeout=0.5)
     bus.send_config_and_wait(mid, COMMAND_CLEAR_RELAY_BIND_ROUTES, timeout=0.5)
+    bus.send_config_and_wait(mid, COMMAND_CLEAR_LED_BINDINGS, timeout=0.5)
+    bus.send_config_and_wait(mid, COMMAND_CLEAR_RELAY_LINKS, timeout=0.5)
     bus.send_config_and_wait(mid, COMMAND_CLEAR_BINARY_BIND_ROUTES, timeout=0.5)
     bus.send_config_and_wait(mid, COMMAND_CLEAR_SHUTTER_BIND_ROUTES, timeout=0.5)
     bus.send_config_and_wait(mid, COMMAND_CLEAR_SENSOR_BIND_ROUTES, timeout=0.5)

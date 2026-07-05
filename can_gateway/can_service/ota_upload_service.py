@@ -7,7 +7,7 @@ import time
 from typing import TYPE_CHECKING, Any, Callable
 
 from protocol_constants import (
-    CAN_ID_OTA_STATUS,
+    CAN_V2_CLASS_OTA_STATUS,
     COMMAND_OTA_ABORT,
     COMMAND_OTA_BEGIN,
     COMMAND_OTA_END,
@@ -18,6 +18,7 @@ from protocol_constants import (
     OTA_STATUS_ERROR,
     OTA_STATUS_NACK,
     OTA_STATUS_READY,
+    can_v2_frame_class,
 )
 
 if TYPE_CHECKING:
@@ -40,7 +41,7 @@ def _poll_ota_status(
         if msg is None:
             continue
         aid = int(getattr(msg, "arbitration_id", 0))
-        if aid != CAN_ID_OTA_STATUS:
+        if can_v2_frame_class(aid) != CAN_V2_CLASS_OTA_STATUS:
             continue
         data = list(getattr(msg, "data", b""))
         if len(data) < 2 or int(data[0]) != int(module_id):

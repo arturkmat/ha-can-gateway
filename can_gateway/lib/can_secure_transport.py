@@ -1,4 +1,17 @@
-"""Encrypted CAN transport (Secure TLV type CAN_FRAME) shared by configurator and tools."""
+"""Encrypted CAN transport (Secure TLV) — V3 standard 11-bit transport.
+
+The V3 wire layout uses all eight frame types, so there is no dedicated secure
+channel. Encrypted / TLV config payloads are carried INSIDE CONFIG_REQUEST
+(frame_type 0), addressed via ``can_v2_config_request_id(target)``; module
+responses use CONFIG_RESPONSE (frame_type 1). Telemetry, control/bind, OTA and
+button-input frames are always plaintext on the wire.
+
+This module is intentionally self-contained for the legacy provisioning /
+Secure-TLV behaviour (the V3 firmware no longer implements a secure channel) and
+only pulls the live V3 helpers and command numbers from ``protocol_constants``.
+The design is kept identical between the Home Assistant add-on copy and the
+konfigurator copy.
+"""
 
 from __future__ import annotations
 
@@ -8,23 +21,14 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Iterable, Optional
 
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-
 from protocol_constants import (
-    CAN_ID_BINARY_BIND_EVENT,
-    CAN_ID_BUTTON_BIND_EVENT,
-    CAN_ID_CONFIG_REQUEST,
-    CAN_ID_CONFIG_RESPONSE,
-    CAN_ID_DEVICE_INFO,
-    CAN_ID_RELAY_BIND_EVENT,
-    CAN_ID_SECURE_TLV_REQUEST,
-    CAN_ID_SECURE_TLV_RESPONSE,
-    CAN_ID_SENSOR_BIND_EVENT,
-    CAN_ID_SHUTTER_BIND_EVENT,
-    CAN_ID_SHUTTER_CMD,
-    PLAINTEXT_TELEMETRY_CAN_IDS,
+    CAN_V2_CLASS_CONFIG_REQUEST,
+    CAN_V2_CLASS_CONFIG_RESPONSE,
     COMMAND_CAN_MUTE,
+    COMMAND_GET_BUILD_INFO,
+    COMMAND_GET_MODULE_NAME,
     COMMAND_GET_SUMMARY,
+    COMMAND_OTA_GET_INFO,
     COMMAND_PROVISION_APPLY,
     COMMAND_PROVISION_APPLY_MASTER_KEY,
     COMMAND_PROVISION_GET_MASTER_KEY_STATE,
@@ -33,15 +37,23 @@ from protocol_constants import (
     COMMAND_PROVISION_SET_MASTER_KEY_PART,
     COMMAND_PROVISION_SET_TARGET_MAC,
     COMMAND_SET_MODULE_ID_BY_MAC,
+    PLAINTEXT_TELEMETRY_CLASSES,
     SECURE_TLV_CHUNK_BYTES,
     SECURE_TLV_MAC_BYTES,
     SECURE_TLV_TYPE_CAN_FRAME,
     SECURE_TLV_TYPE_CONFIG_REQUEST,
     SECURE_TLV_TYPE_CONFIG_RESPONSE,
+    can_v2_config_request_id,
+    can_v2_config_response_id,
+    can_v2_frame_class,
 )
 
 NODE_KEY_CTX = b"CAN-NODE-KEY|v1|"
 CAN_FRAME_VALUE_LEN = 14
+
+# Secure/TLV segments ride on the CONFIG_REQUEST (host→module) and
+# CONFIG_RESPONSE (module→host) frame types — the only carriers left in V3.
+_SECURE_CARRIER_CLASSES = (CAN_V2_CLASS_CONFIG_REQUEST, CAN_V2_CLASS_CONFIG_RESPONSE)
 
 PROVISION_COMMANDS = frozenset(
     {
@@ -62,6 +74,23 @@ PROVISION_MASTER_KEY_WRITE_COMMANDS = frozenset(
     }
 )
 
+# GET_SUMMARY / SET_MODULE_ID_BY_MAC are always plaintext (discovery bootstrap).
+DISCOVERY_ALWAYS_PLAINTEXT_COMMANDS = frozenset(
+    {
+        COMMAND_GET_SUMMARY,
+        COMMAND_SET_MODULE_ID_BY_MAC,
+    }
+)
+# Name / build / OTA info stay plaintext only while the module has no MASTER_KEY.
+DISCOVERY_PLAINTEXT_WITHOUT_KEY_COMMANDS = frozenset(
+    {
+        COMMAND_GET_MODULE_NAME,
+        COMMAND_GET_BUILD_INFO,
+        COMMAND_OTA_GET_INFO,
+    }
+)
+DISCOVERY_PLAINTEXT_COMMANDS = DISCOVERY_ALWAYS_PLAINTEXT_COMMANDS | DISCOVERY_PLAINTEXT_WITHOUT_KEY_COMMANDS
+
 
 def derive_node_key(master_key: bytes, mac_bytes: bytes) -> bytes:
     if len(master_key) != 32:
@@ -74,6 +103,10 @@ def derive_node_key(master_key: bytes, mac_bytes: bytes) -> bytes:
 def xor_crypt(key16: bytes, msg_id: int, payload: bytes) -> bytes:
     if not payload:
         return b""
+    # Imported lazily so the module (and its plaintext helpers) can be imported
+    # for collection/inspection even when `cryptography` is not installed.
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
     cipher = Cipher(algorithms.AES(key16), modes.ECB())
     encryptor = cipher.encryptor()
     block_prefix = bytes([ord("S"), ord("T"), ord("L"), ord("V"), msg_id & 0xFF])
@@ -97,7 +130,7 @@ def mac_tag(key16: bytes, msg_id: int, tlv_type: int, value: bytes) -> bytes:
     return hmac.new(key16, data, sha256).digest()[:SECURE_TLV_MAC_BYTES]
 
 
-def encode_can_frame_value(can_id: int, data: Iterable[int], *, extended: bool = True) -> bytes:
+def encode_can_frame_value(can_id: int, data: Iterable[int], *, extended: bool = False) -> bytes:
     payload = bytes(int(b) & 0xFF for b in data)[:8]
     dlc = len(payload)
     value = bytearray(CAN_FRAME_VALUE_LEN)
@@ -119,25 +152,17 @@ def decode_can_frame_value(value: bytes) -> tuple[int, bool, bytes]:
 
 
 def is_plaintext_bootstrap_tx(can_id: int, data: bytes, *, module_has_master_key: bool = False) -> bool:
-    if can_id == CAN_ID_DEVICE_INFO:
+    frame_class = can_v2_frame_class(can_id)
+    # Telemetry, control/bind events, OTA and button input are never encrypted.
+    if frame_class in PLAINTEXT_TELEMETRY_CLASSES:
         return True
-    if can_id == CAN_ID_SHUTTER_CMD:
-        return True
-    if can_id in (
-        CAN_ID_BUTTON_BIND_EVENT,
-        CAN_ID_RELAY_BIND_EVENT,
-        CAN_ID_BINARY_BIND_EVENT,
-        CAN_ID_SHUTTER_BIND_EVENT,
-        CAN_ID_SENSOR_BIND_EVENT,
-    ):
-        return True
-    if can_id != CAN_ID_CONFIG_REQUEST or len(data) < 2:
+    if frame_class != CAN_V2_CLASS_CONFIG_REQUEST or len(data) < 2:
         return False
     cmd = data[1]
-    if cmd == COMMAND_GET_SUMMARY:
+    if cmd in DISCOVERY_ALWAYS_PLAINTEXT_COMMANDS:
         return True
-    if cmd == COMMAND_SET_MODULE_ID_BY_MAC:
-        return True
+    if cmd in DISCOVERY_PLAINTEXT_WITHOUT_KEY_COMMANDS:
+        return not module_has_master_key
     if cmd in PROVISION_COMMANDS:
         if module_has_master_key and cmd in PROVISION_MASTER_KEY_WRITE_COMMANDS:
             return False
@@ -148,39 +173,19 @@ def is_plaintext_bootstrap_tx(can_id: int, data: bytes, *, module_has_master_key
 
 
 def is_plaintext_bootstrap_rx(can_id: int, data: bytes, *, module_has_master_key: bool = False) -> bool:
-    if can_id == CAN_ID_DEVICE_INFO:
+    frame_class = can_v2_frame_class(can_id)
+    if frame_class in PLAINTEXT_TELEMETRY_CLASSES:
         return True
-    if can_id == CAN_ID_SHUTTER_CMD:
+    if frame_class not in _SECURE_CARRIER_CLASSES or len(data) < 2:
+        return False
+    cmd = data[1]
+    if cmd in DISCOVERY_PLAINTEXT_COMMANDS:
         return True
-    if can_id in (
-        CAN_ID_BUTTON_BIND_EVENT,
-        CAN_ID_RELAY_BIND_EVENT,
-        CAN_ID_BINARY_BIND_EVENT,
-        CAN_ID_SHUTTER_BIND_EVENT,
-        CAN_ID_SENSOR_BIND_EVENT,
-    ):
+    if cmd in PROVISION_COMMANDS:
+        if module_has_master_key and cmd in PROVISION_MASTER_KEY_WRITE_COMMANDS:
+            return False
         return True
-    if can_id == CAN_ID_CONFIG_REQUEST and len(data) >= 2:
-        cmd = data[1]
-        if cmd == COMMAND_GET_SUMMARY:
-            return True
-        if cmd == COMMAND_SET_MODULE_ID_BY_MAC:
-            return True
-        if cmd in PROVISION_COMMANDS:
-            if module_has_master_key and cmd in PROVISION_MASTER_KEY_WRITE_COMMANDS:
-                return False
-            return True
-        if cmd == COMMAND_CAN_MUTE and data[0] == 0xFF:
-            return True
-    if can_id == CAN_ID_CONFIG_RESPONSE and len(data) >= 2:
-        cmd = data[1]
-        if cmd in (COMMAND_GET_SUMMARY, COMMAND_SET_MODULE_ID_BY_MAC):
-            return True
-        if cmd in PROVISION_COMMANDS:
-            if module_has_master_key and cmd in PROVISION_MASTER_KEY_WRITE_COMMANDS:
-                return False
-            return True
-    if can_id == CAN_ID_SECURE_TLV_REQUEST:
+    if frame_class == CAN_V2_CLASS_CONFIG_REQUEST and cmd == COMMAND_CAN_MUTE and data[0] == 0xFF:
         return True
     return False
 
@@ -259,7 +264,7 @@ class SecureCanTransport:
         return frames
 
     def wrap_outgoing(
-        self, target_module_id: int, can_id: int, data: Iterable[int], *, extended: bool = True
+        self, target_module_id: int, can_id: int, data: Iterable[int], *, extended: bool = False
     ) -> Optional[list[tuple[int, list[int]]]]:
         raw = bytes(int(b) & 0xFF for b in data)
         if is_plaintext_bootstrap_tx(can_id, raw):
@@ -267,7 +272,7 @@ class SecureCanTransport:
         value = encode_can_frame_value(can_id, raw, extended=extended)
         return self.build_secure_segments(
             peer_module_id=target_module_id,
-            secure_can_id=CAN_ID_SECURE_TLV_REQUEST,
+            secure_can_id=can_v2_config_request_id(target_module_id),
             tlv_type=SECURE_TLV_TYPE_CAN_FRAME,
             value=value,
         )
@@ -275,14 +280,14 @@ class SecureCanTransport:
     def build_secure_config_request(
         self, target_module_id: int, payload: Iterable[int]
     ) -> Optional[list[tuple[int, list[int]]]]:
-        """Native SECURE_TLV CONFIG_REQUEST (0x730), same path as GUI send_request."""
+        """Encrypted CONFIG_REQUEST carried on can_v2_config_request_id(target)."""
         raw = bytes(int(b) & 0xFF for b in payload)
         if len(raw) > 8:
             raw = raw[:8]
         value = raw.ljust(8, b"\x00")
         return self.build_secure_segments(
             peer_module_id=target_module_id,
-            secure_can_id=CAN_ID_SECURE_TLV_REQUEST,
+            secure_can_id=can_v2_config_request_id(target_module_id),
             tlv_type=SECURE_TLV_TYPE_CONFIG_REQUEST,
             value=value,
         )
@@ -316,12 +321,12 @@ class SecureCanTransport:
             self.unique_macs[mac_b] = int(peer_module_id)
             if tlv_type in (SECURE_TLV_TYPE_CONFIG_REQUEST, SECURE_TLV_TYPE_CONFIG_RESPONSE):
                 inner_id = (
-                    CAN_ID_CONFIG_REQUEST
+                    can_v2_config_request_id(peer_module_id)
                     if tlv_type == SECURE_TLV_TYPE_CONFIG_REQUEST
-                    else CAN_ID_CONFIG_RESPONSE
+                    else can_v2_config_response_id(peer_module_id)
                 )
                 inner = value + bytes(8 - len(value))
-                return inner_id, True, inner[:8], mac_b
+                return inner_id, False, inner[:8], mac_b
             can_id, ext, payload = decode_can_frame_value(value)
             return can_id, ext, payload, mac_b
         return None
@@ -331,7 +336,7 @@ class SecureCanTransport:
     ) -> Optional[tuple[int, bool, bytes]]:
         if len(data) < 4:
             return None
-        if secure_can_id not in (CAN_ID_SECURE_TLV_REQUEST, CAN_ID_SECURE_TLV_RESPONSE):
+        if can_v2_frame_class(secure_can_id) not in _SECURE_CARRIER_CLASSES:
             return None
         msg_id = data[1]
         seg_idx = data[2]
@@ -368,13 +373,14 @@ class SecureCanTransport:
     ) -> Optional[tuple[int, bool, bytes]]:
         raw = bytes(data[:8])
         peer = default_peer if default_peer is not None else (raw[0] if raw else 0)
-        if can_id in (CAN_ID_SECURE_TLV_REQUEST, CAN_ID_SECURE_TLV_RESPONSE):
-            return self.ingest_secure_segment(peer, can_id, raw)
-        # Encrypted config always uses 0x731; 0x701/0x711 are always plaintext on the wire.
-        if can_id in (CAN_ID_DEVICE_INFO, CAN_ID_CONFIG_RESPONSE):
-            return can_id, True, raw
-        if can_id in PLAINTEXT_TELEMETRY_CAN_IDS:
-            return can_id, True, raw
+        frame_class = can_v2_frame_class(can_id)
+        # Telemetry / control / OTA / input frames are plaintext passthrough.
+        if frame_class in PLAINTEXT_TELEMETRY_CLASSES:
+            return can_id, False, raw
+        # Plaintext bootstrap config commands/responses pass through unchanged.
         if is_plaintext_bootstrap_rx(can_id, raw):
-            return can_id, True, raw
+            return can_id, False, raw
+        # Remaining CONFIG_REQUEST/RESPONSE frames are encrypted TLV segments.
+        if frame_class in _SECURE_CARRIER_CLASSES:
+            return self.ingest_secure_segment(peer, can_id, raw)
         return None

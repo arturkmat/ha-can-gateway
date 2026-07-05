@@ -9,14 +9,6 @@ from typing import Any, Callable
 
 from can_secure_transport import SecureCanTransport
 from protocol_constants import (
-    CAN_ID_CONFIG_REQUEST,
-    CAN_ID_CONFIG_RESPONSE,
-    CAN_ID_DEVICE_INFO,
-    CAN_ID_RELAY_GPIO_MAP,
-    CAN_ID_RELAYS,
-    CAN_ID_RELAYS_MCP23017,
-    CAN_ID_SENSORS,
-    CAN_ID_SHUTTER_STATUS,
     COMMAND_GET_BUILD_INFO,
     COMMAND_GET_BUTTON_TIMING,
     COMMAND_GET_MCP23017_ROLE_DUMP,
@@ -32,11 +24,14 @@ from protocol_constants import (
     SHIFT595_RELAY_BASE_INDEX,
     SHIFT595_RELAY_COUNT_PER_REGISTER,
     UNKNOWN_MODULE_IDS,
+    can_v2_config_request_id,
+    can_v2_ota_data_id,
 )
 
 from .can_send import prepare_outgoing_frames
 from .configurator_bridge import create_engine
 from .deep_config import refresh_module_deep as _refresh_module_deep_impl
+from .module_store import discovery_snapshot, load_modules, save_modules
 from .module_state import (
     ModuleRuntimeState,
     RelayState,
@@ -136,6 +131,8 @@ class BusManager:
         self._bus = None
         self._transport: SecureCanTransport | None = None
         self._modules: dict[int, ModuleRecord] = {}
+        self._persisted_modules: dict[int, dict[str, Any]] = {}
+        self._load_persisted_modules()
         self._stop = threading.Event()
         self._rx_thread: threading.Thread | None = None
         self._bus_error: str | None = None
@@ -243,7 +240,7 @@ class BusManager:
                 "module_count": len(self._modules),
                 "last_scan_status": self._last_scan_status,
                 "last_scan_at": self._last_scan_at,
-                "version": "0.5.0",
+                "version": "0.5.1",
                 "mqtt_enabled": self._options.mqtt_enabled,
             }
 
@@ -254,6 +251,8 @@ class BusManager:
         engine = self._get_engine()
         modules = [engine.export_module_dict(rec["module_id"]) for rec in engine.list_modules()]
         if not modules:
+            modules = self.list_modules(include_runtime=True)
+        if not modules:
             with self._lock:
                 for rec in sorted(self._modules.values(), key=lambda r: r.module_id):
                     modules.append(rec.to_dict(include_runtime=True))
@@ -262,11 +261,66 @@ class BusManager:
         entities = build_entities_snapshot(modules)
         return {"status": self.status(), "modules": modules, "entities": entities}
 
-    def list_modules(self) -> list[dict[str, Any]]:
+    def _load_persisted_modules(self) -> None:
+        for mod in load_modules():
+            mid = mod.get("module_id")
+            if isinstance(mid, int) and 1 <= mid <= 254:
+                self._persisted_modules[int(mid)] = mod
+        if self._persisted_modules:
+            _LOGGER.info(
+                "Loaded %d persisted module(s) from disk",
+                len(self._persisted_modules),
+            )
+
+    def persist_discovery_state(self, *, last_scan_at: float | None = None) -> None:
+        modules: list[dict[str, Any]] = []
+        engine = self._get_engine()
+        for rec in engine.list_modules():
+            mid = int(rec["module_id"])
+            detail = self.module_detail(mid)
+            if isinstance(detail, dict):
+                modules.append(detail)
+        if not modules:
+            with self._lock:
+                for rec in sorted(self._modules.values(), key=lambda r: r.module_id):
+                    modules.append(rec.to_dict(include_runtime=True))
+        if not modules and self._persisted_modules:
+            modules = list(self._persisted_modules.values())
+        if not modules:
+            return
+        save_modules(modules, last_scan_at=last_scan_at)
+        with self._lock:
+            for mod in modules:
+                mid = mod.get("module_id")
+                if isinstance(mid, int):
+                    self._persisted_modules[int(mid)] = mod
+        _LOGGER.info("Persisted %d module snapshot(s) to /data", len(modules))
+
+    def discovery_payload(self) -> dict[str, Any]:
+        modules = self.list_modules(include_runtime=True)
+        store = discovery_snapshot(scan_status=self._last_scan_status)
+        if modules:
+            store["modules"] = modules
+            store["module_count"] = len(modules)
+        return store
+
+    def list_modules(self, *, include_runtime: bool = False) -> list[dict[str, Any]]:
         rows = self._get_engine().list_modules()
         if rows:
+            if include_runtime:
+                return [self.module_detail(int(r["module_id"])) or r for r in rows]
             return rows
         with self._lock:
+            if self._persisted_modules:
+                if include_runtime:
+                    return list(self._persisted_modules.values())
+                out = []
+                for mod in self._persisted_modules.values():
+                    row = dict(mod)
+                    row.pop("runtime", None)
+                    row.pop("control_relays", None)
+                    out.append(row)
+                return sorted(out, key=lambda r: r.get("module_id", 0))
             return [rec.to_dict() for rec in sorted(self._modules.values(), key=lambda r: r.module_id)]
 
     def module_detail(self, module_id: int) -> dict[str, Any] | None:
@@ -280,6 +334,9 @@ class BusManager:
         with self._lock:
             rec = self._modules.get(mid)
             if rec is None:
+                persisted = self._persisted_modules.get(mid)
+                if persisted is not None:
+                    return dict(persisted)
                 return None
             out = rec.to_dict(include_runtime=True)
             out["control_relays"] = self._relay_controls_from_record(rec)
@@ -899,7 +956,7 @@ class BusManager:
         if args:
             for i, val in enumerate(args[:6]):
                 payload[2 + i] = int(val) & 0xFF
-        return self.send_raw(CAN_ID_CONFIG_REQUEST, payload)
+        return self.send_raw(can_v2_config_request_id(int(module_id)), payload)
 
     def send_raw(self, can_id: int, data: list[int]) -> bool:
         if not self.ensure_bus():
@@ -925,7 +982,7 @@ class BusManager:
             ok = self._send_message(
                 can.Message(
                     arbitration_id=int(frame_id),
-                    is_extended_id=True,
+                    is_extended_id=False,
                     data=frame_data,
                 )
             )
@@ -934,17 +991,15 @@ class BusManager:
         return True
 
     def send_ota_data(self, module_id: int, data: list[int]) -> bool:
-        """Send OTA_DATA (0x720) — module_id for Secure TLV, payload is seq+bytes."""
+        """Send OTA_DATA frame (V3 frame_type 3) — payload is seq + firmware bytes."""
         if not self.ensure_bus():
             return False
         self._sync_transport_macs_from_engine()
-        from protocol_constants import CAN_ID_OTA_DATA
-
         module_has_key = self._get_engine()._module_has_master_key_for_tx(int(module_id))  # noqa: SLF001
         frames = prepare_outgoing_frames(
             self._transport,
             int(module_id),
-            CAN_ID_OTA_DATA,
+            can_v2_ota_data_id(int(module_id)),
             data,
             module_has_master_key=module_has_key,
         )
@@ -954,7 +1009,7 @@ class BusManager:
 
         for frame_id, frame_data in frames:
             if not self._send_message(
-                can.Message(arbitration_id=int(frame_id), is_extended_id=True, data=frame_data)
+                can.Message(arbitration_id=int(frame_id), is_extended_id=False, data=frame_data)
             ):
                 return False
         return True
@@ -984,7 +1039,10 @@ class BusManager:
         if not self._begin_exclusive_io():
             return {"ok": False, "error": "bus busy (scan/refresh in progress)"}
         try:
-            return _refresh_module_deep_impl(self, module_id)
+            result = _refresh_module_deep_impl(self, module_id)
+            if result.get("ok"):
+                self.persist_discovery_state()
+            return result
         finally:
             self._end_exclusive_io()
 
@@ -1001,10 +1059,22 @@ class BusManager:
             return {"ok": False, "error": self._bus_error or "bus not open"}
         result = self._get_engine().scan_modules_sync()
         self._sync_transport_macs_from_engine()
+        scan_at: float | None = None
         if result.get("ok"):
             self.refresh_relay_telemetry(0.8)
+            for rec in self._get_engine().list_modules():
+                mid = int(rec["module_id"])
+                try:
+                    _refresh_module_deep_impl(self, mid)
+                except Exception:  # noqa: BLE001
+                    _LOGGER.debug("Deep refresh module %s failed", mid, exc_info=True)
+            scan_at = time.time()
+            self.persist_discovery_state(last_scan_at=scan_at)
         with self._lock:
             self._last_scan_status = "ok" if result.get("ok") else "error"
             if result.get("ok"):
-                self._last_scan_at = time.time()
+                self._last_scan_at = scan_at or time.time()
+        modules = self.list_modules()
+        result["module_count"] = len(modules)
+        result["modules"] = modules
         return result

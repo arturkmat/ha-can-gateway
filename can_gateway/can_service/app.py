@@ -62,7 +62,29 @@ def create_app(bus: BusManager) -> web.Application:
         )
 
     async def api_modules(_request: web.Request) -> web.Response:
-        return web.json_response({"modules": bus.list_modules()})
+        return web.json_response(
+            {
+                "modules": bus.list_modules(include_runtime=True),
+                "module_count": len(bus.list_modules()),
+                "status": bus.status(),
+            }
+        )
+
+    async def api_discovery(_request: web.Request) -> web.Response:
+        return web.json_response(bus.discovery_payload())
+
+    async def api_can_send(request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            can_id = int(body.get("can_id", 0))
+            data = body.get("data") or []
+            if not isinstance(data, list):
+                return _json_error("data must be a list")
+            ok = await asyncio.to_thread(bus.send_raw, can_id, [int(b) & 0xFF for b in data[:8]])
+            status = 200 if ok else 503
+            return web.json_response({"ok": ok, "can_id": can_id}, status=status)
+        except (KeyError, TypeError, ValueError):
+            return _json_error("invalid can_id/data")
 
     async def api_module_detail(request: web.Request) -> web.Response:
         try:
@@ -458,6 +480,8 @@ def create_app(bus: BusManager) -> web.Application:
     app.router.add_get("/api/state", api_state)
     app.router.add_get("/api/entities", api_entities)
     app.router.add_get("/api/modules", api_modules)
+    app.router.add_get("/api/discovery", api_discovery)
+    app.router.add_post("/api/can/send", api_can_send)
     app.router.add_get("/api/modules/{module_id}", api_module_detail)
     app.router.add_post("/api/scan", api_scan)
     app.router.add_post("/api/modules/{module_id}/tab-load", api_module_tab_load)

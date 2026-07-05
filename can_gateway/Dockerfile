@@ -14,7 +14,7 @@ COPY lib /lib
 COPY can_service /opt/can_service
 COPY static /opt/can_service/static
 
-RUN PYTHONPATH=/lib python3 -c "import serial; from configurator_engine import ConfiguratorEngine; from protocol_constants import CAN_ID_RELAY_GPIO_MAP; print('deps ok', serial.__version__, CAN_ID_RELAY_GPIO_MAP)"
+RUN PYTHONPATH=/lib python3 -c "import serial; from configurator_engine import ConfiguratorEngine; from protocol_constants import can_v2_config_request_id; print('deps ok', serial.__version__, hex(can_v2_config_request_id(1)))"
 
 WORKDIR /opt
 

@@ -17,15 +17,9 @@ from typing import Any, Callable, Protocol
 from can_secure_transport import is_plaintext_bootstrap_tx
 from pinout_data import DEVICE_PINOUTS
 from protocol_constants import (
-    CAN_ID_CONFIG_REQUEST,
-    CAN_ID_CONFIG_RESPONSE,
-    CAN_ID_DEVICE_INFO,
-    CAN_ID_RELAY_GPIO_MAP,
-    CAN_ID_RELAYS,
-    CAN_ID_RELAYS_MCP23017,
-    CAN_ID_SENSORS,
-    CAN_ID_SHUTTER_CMD,
-    CAN_ID_SHUTTER_STATUS,
+    CAN_V2_CLASS_CONFIG_RESPONSE,
+    CAN_V2_CLASS_SENSOR_EVENTS,
+    CAN_V2_CLASS_STATE_TELEMETRY,
     COMMAND_GET_BUILD_INFO,
     COMMAND_GET_BUTTON_TIMING,
     COMMAND_GET_GPIO_ROLE,
@@ -49,12 +43,23 @@ from protocol_constants import (
     MCP23017_OUTPUT_COUNT,
     MCP23017_PIN_ROLE_RELAY,
     MCP23017_RELAY_BASE_INDEX,
-    MCP23017_RELAY_BASE_INDEX,
     PIN_ROLE_MAP,
-    PLAINTEXT_TELEMETRY_CAN_IDS,
     SHIFT595_RELAY_BASE_INDEX,
     SHIFT595_RELAY_COUNT_PER_REGISTER,
+    TELE_DEVICE_INFO,
+    TELE_DIAGNOSTICS,
+    TELE_GPIO_VALUE,
+    TELE_MCP23017_RELAY,
+    TELE_RELAY_GPIO_MAP,
+    TELE_RELAY_STATE,
+    TELE_SHUTTER_STATUS,
+    STATE_TELEMETRY_MAX_GPIO_NUM,
     UNKNOWN_MODULE_IDS,
+    can_v2_config_request_id,
+    can_v2_control_command_id,
+    can_v2_frame_class,
+    can_v2_frame_module_id,
+    is_plaintext_telemetry_id,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -167,9 +172,18 @@ class ConfiguratorEngine:
             self._drain_rx()
             payload = [0xFF, COMMAND_GET_SUMMARY, 0, 0, 0, 0, 0, 0]
             for attempt in range(3):
-                self._secure_bus_send(0xFF, CAN_ID_CONFIG_REQUEST, payload, log_traffic=False)
+                self._secure_bus_send(0xFF, can_v2_config_request_id(0xFF), payload, log_traffic=False)
                 if attempt < 2:
                     time.sleep(0.08)
+            for mid in range(1, 33):
+                unicast_payload = [mid, COMMAND_GET_SUMMARY, 0, 0, 0, 0, 0, 0]
+                self._secure_bus_send(
+                    mid,
+                    can_v2_config_request_id(mid),
+                    unicast_payload,
+                    log_traffic=False,
+                )
+                time.sleep(0.015)
             deadline = time.time() + 4.5
             pending_summary_macs: list[int] = []
             touched_ids: set[int] = set()
@@ -181,8 +195,11 @@ class ConfiguratorEngine:
                 if message is None:
                     continue
                 raw = list(message.data)
-                if message.arbitration_id == CAN_ID_DEVICE_INFO and len(raw) >= 8:
-                    module_id = raw[0]
+                if (
+                    can_v2_frame_class(message.arbitration_id) == CAN_V2_CLASS_STATE_TELEMETRY
+                    and self._is_device_info_telemetry(raw)
+                ):
+                    module_id = can_v2_frame_module_id(message.arbitration_id)
                     hw_type = raw[1]
                     module_mac = self._extract_device_mac(raw)
                     if module_mac is not None:
@@ -195,12 +212,16 @@ class ConfiguratorEngine:
                         touched_ids.add(module_id)
                     continue
                 if (
-                    message.arbitration_id == CAN_ID_CONFIG_RESPONSE
+                    can_v2_frame_class(message.arbitration_id) == CAN_V2_CLASS_CONFIG_RESPONSE
                     and len(raw) >= 8
                     and raw[1] == COMMAND_GET_SUMMARY
                     and raw[2] == 0
                 ):
                     module_id = raw[0]
+                    if module_id in UNKNOWN_MODULE_IDS:
+                        arb_mid = can_v2_frame_module_id(message.arbitration_id)
+                        if arb_mid not in UNKNOWN_MODULE_IDS:
+                            module_id = arb_mid
                     details = self.build_summary_details(raw)
                     if module_id in UNKNOWN_MODULE_IDS:
                         if pending_summary_macs:
@@ -216,6 +237,25 @@ class ConfiguratorEngine:
                     touched_ids.add(module_id)
                     continue
                 self.handle_can_message(message, already_normalized=True)
+
+            for module in list(self.discovered_modules):
+                mid = module.get("module_id")
+                if mid in UNKNOWN_MODULE_IDS or module.get("details") not in (None, "", "brak summary"):
+                    continue
+                response = self.send_request(
+                    int(mid),
+                    COMMAND_GET_SUMMARY,
+                    timeout=0.75,
+                    log_traffic=False,
+                )
+                if response and len(response) >= 8 and response[2] == 0:
+                    details = self.build_summary_details(response)
+                    if self._upsert_discovered(int(mid), details=details):
+                        self._io.notify()
+                    if len(response) > 7:
+                        self.context(int(mid)).hw_flags = int(response[7])
+                        self._apply_summary_counts(int(mid), response)
+                    touched_ids.add(int(mid))
 
             for module_id in sorted(touched_ids):
                 if module_id in UNKNOWN_MODULE_IDS:
@@ -294,9 +334,13 @@ class ConfiguratorEngine:
         if message is None or not message.data:
             return False
         payload = list(message.data)
-        module_id = int(payload[0])
+        frame_class = can_v2_frame_class(message.arbitration_id)
+        if frame_class == CAN_V2_CLASS_STATE_TELEMETRY:
+            module_id = can_v2_frame_module_id(message.arbitration_id)
+        else:
+            module_id = int(payload[0])
 
-        if message.arbitration_id == CAN_ID_DEVICE_INFO and len(payload) >= 8:
+        if frame_class == CAN_V2_CLASS_STATE_TELEMETRY and self._is_device_info_telemetry(payload):
             hw = payload[1]
             mac = self._extract_device_mac(payload)
             if self._upsert_discovered(module_id, hw_type=hw, module_mac=mac):
@@ -307,24 +351,9 @@ class ConfiguratorEngine:
             return False
 
         ctx = self.context(module_id)
-        if message.arbitration_id == CAN_ID_RELAYS:
-            return self._apply_relays_frame(ctx, payload)
-        if message.arbitration_id == CAN_ID_RELAYS_MCP23017:
-            return self._apply_mcp_relays_frame(ctx, payload)
-        if message.arbitration_id == CAN_ID_SHUTTER_STATUS and len(payload) >= 4:
-            sid = int(payload[1])
-            if sid < 1 or sid > MAX_SHUTTERS:
-                return False
-            pos = int(payload[2])
-            direction = int(payload[3])
-            ctx.shutter_relay_pairs.setdefault(sid, {})
-            prev = ctx.shutter_states.get(sid)
-            new_state = {"position": pos, "direction": direction}
-            ctx.shutter_states[sid] = new_state
-            if prev != new_state:
-                self._io.notify()
-            return True
-        if message.arbitration_id == CAN_ID_SENSORS and len(payload) >= 7:
+        if frame_class == CAN_V2_CLASS_STATE_TELEMETRY:
+            return self._apply_state_telemetry(ctx, payload)
+        if frame_class == CAN_V2_CLASS_SENSOR_EVENTS and len(payload) >= 7:
             ctx.sensors.append(
                 {"sensor_no": int(payload[1]), "sensor_type": int(payload[2]), "data": payload[3:], "ts": time.time()}
             )
@@ -332,9 +361,7 @@ class ConfiguratorEngine:
                 ctx.sensors = ctx.sensors[-32:]
             self._io.notify()
             return True
-        if message.arbitration_id == CAN_ID_RELAY_GPIO_MAP and len(payload) >= 3:
-            return self._apply_relay_gpio_map_frame(ctx, payload)
-        if message.arbitration_id == CAN_ID_CONFIG_RESPONSE and len(payload) >= 3:
+        if frame_class == CAN_V2_CLASS_CONFIG_RESPONSE and len(payload) >= 3:
             self._apply_config_response(ctx, payload)
             return True
         return False
@@ -378,7 +405,7 @@ class ConfiguratorEngine:
         self._io_acquire()
         try:
             self._refresh_secure_transport()
-            self._secure_bus_send(mid, CAN_ID_SHUTTER_CMD, payload, log_traffic=False)
+            self._secure_bus_send(mid, can_v2_control_command_id(mid), payload, log_traffic=False)
             deadline = time.time() + 0.45
             while time.time() < deadline:
                 message = self._safe_recv(min(0.05, max(0.0, deadline - time.time())))
@@ -643,7 +670,7 @@ class ConfiguratorEngine:
         try:
             if self._send_request_use_secure_tlv(target_id, payload):
                 return self._secure_tlv_send_and_wait(target_id, command, payload, timeout, log_traffic)
-            self._secure_bus_send(target_id, CAN_ID_CONFIG_REQUEST, payload, log_traffic=log_traffic)
+            self._secure_bus_send(target_id, can_v2_config_request_id(target_id), payload, log_traffic=log_traffic)
             return self.wait_for_response(target_id, command, timeout=timeout, log_traffic=log_traffic)
         finally:
             if acquired:
@@ -665,19 +692,21 @@ class ConfiguratorEngine:
             message = self._normalize(message)
             if message is None:
                 continue
-            if message.arbitration_id != CAN_ID_CONFIG_RESPONSE:
+            if can_v2_frame_class(message.arbitration_id) != CAN_V2_CLASS_CONFIG_RESPONSE:
                 self.handle_can_message(message)
                 continue
             payload = list(message.data)
             if log_traffic:
-                self._io.log(f"RX 0x711 {payload}")
+                self._io.log(f"RX 0x{message.arbitration_id:03X} {payload}")
             if len(payload) < 4 or payload[1] != command:
                 continue
-            if target_id != 0xFF and payload[0] != target_id and command not in (
+            if target_id != 0xFF and command not in (
                 COMMAND_SET_MODULE_ID,
                 COMMAND_SET_MODULE_ID_BY_MAC,
             ):
-                continue
+                arb_mid = can_v2_frame_module_id(message.arbitration_id)
+                if payload[0] != target_id and arb_mid != target_id:
+                    continue
             return payload
         return None
 
@@ -944,6 +973,37 @@ class ConfiguratorEngine:
                 continue
             self._store_relay_state(mid, int(relay_index), int(resp[3]))
         self.collect_relay_state_frames(0.35)
+
+    def _apply_state_telemetry(self, ctx: ModuleContext, payload: list[int]) -> bool:
+        if len(payload) < 1:
+            return False
+        subtype = payload[0]
+        if subtype == TELE_GPIO_VALUE:
+            return False
+        if subtype == TELE_SHUTTER_STATUS:
+            if len(payload) < 4:
+                return False
+            sid = int(payload[1])
+            pos = int(payload[2])
+            direction = int(payload[3])
+            ctx.shutter_relay_pairs.setdefault(sid, {})
+            prev = ctx.shutter_states.get(sid)
+            new_state = {"position": pos, "direction": direction}
+            ctx.shutter_states[sid] = new_state
+            if prev != new_state:
+                self._io.notify()
+            return True
+        if subtype == TELE_RELAY_GPIO_MAP:
+            return self._apply_relay_gpio_map_frame(ctx, payload)
+        if subtype == TELE_DIAGNOSTICS:
+            return False
+        if subtype == TELE_DEVICE_INFO:
+            return False
+        if subtype == TELE_MCP23017_RELAY:
+            return self._apply_mcp_relays_frame(ctx, payload)
+        if subtype == TELE_RELAY_STATE:
+            return self._apply_relays_frame(ctx, payload)
+        return False
 
     def _apply_relay_gpio_map_frame(self, ctx: ModuleContext, payload: list[int]) -> bool:
         if len(payload) < 3:
@@ -1257,11 +1317,11 @@ class ConfiguratorEngine:
         if is_plaintext_bootstrap_tx(can_id, raw, module_has_master_key=module_has_key):
             self._io.send_can_frame(can_id, list(raw))
             return
-        if can_id in PLAINTEXT_TELEMETRY_CAN_IDS and self._master_key is None:
+        if is_plaintext_telemetry_id(can_id) and self._master_key is None:
             self._io.send_can_frame(can_id, list(raw))
             return
         if (
-            can_id in PLAINTEXT_TELEMETRY_CAN_IDS
+            is_plaintext_telemetry_id(can_id)
             and target_module_id not in UNKNOWN_MODULE_IDS
             and not module_has_key
         ):
@@ -1309,7 +1369,7 @@ class ConfiguratorEngine:
     def _secure_tlv_send_and_wait(
         self, target_id: int, command: int, payload: list[int], timeout: float, log_traffic: bool
     ) -> list[int] | None:
-        self._secure_bus_send(target_id, CAN_ID_CONFIG_REQUEST, payload, log_traffic=log_traffic)
+        self._secure_bus_send(target_id, can_v2_config_request_id(target_id), payload, log_traffic=log_traffic)
         return self.wait_for_response(target_id, command, timeout=timeout, log_traffic=log_traffic)
 
     def _normalize(self, message: Any) -> Any | None:
@@ -1340,6 +1400,10 @@ class ConfiguratorEngine:
         for i in range(2, 8):
             mac = (mac << 8) | (payload[i] & 0xFF)
         return mac
+
+    @staticmethod
+    def _is_device_info_telemetry(data: list[int]) -> bool:
+        return len(data) >= 8 and data[0] == TELE_DEVICE_INFO and data[1] in HW_TYPE_NAME_MAP
 
     @staticmethod
     def _mac_label(module_mac: int | None) -> str | None:

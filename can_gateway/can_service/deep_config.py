@@ -6,7 +6,6 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from protocol_constants import (
-    CAN_ID_CONFIG_REQUEST,
     COMMAND_GET_BUILD_INFO,
     COMMAND_GET_MCP23017_ROLE_DUMP,
     COMMAND_GET_MODULE_NAME,

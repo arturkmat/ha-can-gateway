@@ -1,64 +1,114 @@
-"""CAN protocol constants shared by configurator and tools."""
+"""CAN protocol constants shared by configurator and tools — V3 transport.
 
-CAN_ID_EXT_BASE = 0x1CE00000
-CAN_ID_CONFIG_REQUEST = CAN_ID_EXT_BASE | 0x710
-CAN_ID_CONFIG_RESPONSE = CAN_ID_EXT_BASE | 0x711
-CAN_ID_DEVICE_INFO = CAN_ID_EXT_BASE | 0x701
-CAN_ID_GPIO_VALUES = CAN_ID_EXT_BASE | 0x520
-CAN_ID_RELAYS = CAN_ID_EXT_BASE | 0x600
-CAN_ID_RELAY_GPIO_MAP = CAN_ID_EXT_BASE | 0x601
-CAN_ID_RELAYS_MCP23017 = CAN_ID_EXT_BASE | 0x602
-CAN_ID_SHUTTER_CMD = CAN_ID_EXT_BASE | 0x650
-CAN_ID_SHUTTER_STATUS = CAN_ID_EXT_BASE | 0x660
-CAN_ID_SENSORS = CAN_ID_EXT_BASE | 0x400
-CAN_ID_OTA_DATA = CAN_ID_EXT_BASE | 0x720
-CAN_ID_OTA_STATUS = CAN_ID_EXT_BASE | 0x721
-CAN_ID_SECURE_TLV_REQUEST = CAN_ID_EXT_BASE | 0x730
-CAN_ID_SECURE_TLV_RESPONSE = CAN_ID_EXT_BASE | 0x731
-CAN_ID_BUTTONS = CAN_ID_EXT_BASE | 0x100
-CAN_ID_BUTTON_BIND_EVENT = CAN_ID_EXT_BASE | 0x101
-CAN_ID_RELAY_BIND_EVENT = CAN_ID_EXT_BASE | 0x102
-CAN_ID_BINARY_BIND_EVENT = CAN_ID_EXT_BASE | 0x103
-CAN_ID_SHUTTER_BIND_EVENT = CAN_ID_EXT_BASE | 0x104
-CAN_ID_SENSOR_BIND_EVENT = CAN_ID_EXT_BASE | 0x105
+V3 wire layout: ``can_id = (module_id << 3) | frame_type`` as a standard 11-bit
+frame (``is_extended_id=False``). All legacy fixed 29-bit / flat 0x1CE0xxxx IDs
+have been removed; build arbitration IDs with the ``can_v2_*`` helpers below.
+This mirrors ``konfigurator_windows_usb_can/protocol_constants.py`` and the
+firmware ``can_protocol.h`` so every layer agrees.
+"""
 
-# Ramki telemetryczne — zawsze plaintext na magistrali (modul bez klucza).
-# Modul z MASTER_KEY nadaje te same ID przez Secure TLV CAN_FRAME (0x731).
-PLAINTEXT_TELEMETRY_CAN_IDS = frozenset(
+# Frame types (0..7) — the low 3 bits of the 11-bit arbitration ID.
+CAN_V2_CLASS_CONFIG_REQUEST = 0x00
+CAN_V2_CLASS_CONFIG_RESPONSE = 0x01
+CAN_V2_CLASS_CONTROL_COMMAND = 0x02
+CAN_V2_CLASS_OTA_DATA = 0x03
+CAN_V2_CLASS_OTA_STATUS = 0x04
+CAN_V2_CLASS_INPUT_EVENTS = 0x05
+CAN_V2_CLASS_SENSOR_EVENTS = 0x06
+CAN_V2_CLASS_STATE_TELEMETRY = 0x07
+
+# STATE_TELEMETRY payload[0] subtypes (module_id is in the CAN arbitration id).
+TELE_DEVICE_INFO = 1
+TELE_RELAY_STATE = 2
+TELE_RELAY_GPIO_MAP = 3
+TELE_MCP23017_RELAY = 4
+TELE_GPIO_VALUE = 5
+TELE_SHUTTER_STATUS = 6
+TELE_DIAGNOSTICS = 7
+
+CAN_V3_ID_MASK_MODULE = 0x7F8
+CAN_V3_ID_MASK_TYPE = 0x007
+CAN_V3_BROADCAST_MODULE_ID = 0xFF
+
+
+def can_v2_frame_id(frame_class: int, module_id: int) -> int:
+    """V3: (module_id << 3) | frame_type."""
+    return ((int(module_id) & 0xFF) << 3) | (int(frame_class) & 0x07)
+
+
+def can_v2_frame_class(arbitration_id: int) -> int:
+    return int(arbitration_id) & CAN_V3_ID_MASK_TYPE
+
+
+def can_v2_frame_module_id(arbitration_id: int) -> int:
+    return (int(arbitration_id) & CAN_V3_ID_MASK_MODULE) >> 3
+
+
+def can_v2_input_events_broadcast_id() -> int:
+    return can_v2_frame_id(CAN_V2_CLASS_INPUT_EVENTS, CAN_V3_BROADCAST_MODULE_ID)
+
+
+def can_v2_config_request_id(module_id: int) -> int:
+    return can_v2_frame_id(CAN_V2_CLASS_CONFIG_REQUEST, module_id)
+
+
+def can_v2_config_response_id(module_id: int) -> int:
+    return can_v2_frame_id(CAN_V2_CLASS_CONFIG_RESPONSE, module_id)
+
+
+def can_v2_control_command_id(module_id: int) -> int:
+    return can_v2_frame_id(CAN_V2_CLASS_CONTROL_COMMAND, module_id)
+
+
+def can_v2_ota_data_id(module_id: int) -> int:
+    return can_v2_frame_id(CAN_V2_CLASS_OTA_DATA, module_id)
+
+
+def can_v2_ota_status_id(module_id: int) -> int:
+    return can_v2_frame_id(CAN_V2_CLASS_OTA_STATUS, module_id)
+
+
+def can_v2_state_telemetry_id(module_id: int) -> int:
+    return can_v2_frame_id(CAN_V2_CLASS_STATE_TELEMETRY, module_id)
+
+
+def can_v2_sensor_events_id(module_id: int) -> int:
+    return can_v2_frame_id(CAN_V2_CLASS_SENSOR_EVENTS, module_id)
+
+
+# Frame types whose payloads are always plaintext on the wire (telemetry,
+# control/bind events, OTA, button input). CONFIG_REQUEST/RESPONSE are
+# excluded because they may carry encrypted (Secure TLV) config payloads.
+PLAINTEXT_TELEMETRY_CLASSES = frozenset(
     {
-        CAN_ID_GPIO_VALUES,
-        CAN_ID_RELAYS,
-        CAN_ID_RELAY_GPIO_MAP,
-        CAN_ID_RELAYS_MCP23017,
-        CAN_ID_SHUTTER_CMD,
-        CAN_ID_SHUTTER_STATUS,
-        CAN_ID_SENSORS,
-        CAN_ID_OTA_DATA,
-        CAN_ID_OTA_STATUS,
-        CAN_ID_BUTTONS,
-        CAN_ID_BUTTON_BIND_EVENT,
-        CAN_ID_RELAY_BIND_EVENT,
-        CAN_ID_BINARY_BIND_EVENT,
-        CAN_ID_SHUTTER_BIND_EVENT,
-        CAN_ID_SENSOR_BIND_EVENT,
+        CAN_V2_CLASS_CONTROL_COMMAND,
+        CAN_V2_CLASS_OTA_DATA,
+        CAN_V2_CLASS_OTA_STATUS,
+        CAN_V2_CLASS_INPUT_EVENTS,
+        CAN_V2_CLASS_SENSOR_EVENTS,
+        CAN_V2_CLASS_STATE_TELEMETRY,
     }
 )
+
+
+def is_plaintext_telemetry_id(arbitration_id: int) -> bool:
+    return can_v2_frame_class(arbitration_id) in PLAINTEXT_TELEMETRY_CLASSES
+
 
 UNKNOWN_MODULE_IDS = {0, 0xFF}
 
 
-def can_id_to_bus(arbitration_id: int, *, legacy_11bit: bool) -> tuple[int, bool]:
-    """Map internal extended CAN_ID to bus arbitration_id + is_extended_id."""
-    if legacy_11bit:
-        return arbitration_id & 0x7FF, False
-    return arbitration_id, True
+def can_id_to_bus(arbitration_id: int, *, legacy_11bit: bool = True) -> tuple[int, bool]:
+    """V3 frames are always standard 11-bit (mask to 11 bits, never extended)."""
+    return int(arbitration_id) & 0x7FF, False
 
 
-def normalize_legacy_rx_id(arbitration_id: int, *, is_extended: bool, legacy_11bit: bool) -> int:
-    """Normalize received ID to internal extended form (0x1CE00000 | legacy)."""
-    if legacy_11bit and not is_extended:
-        return CAN_ID_EXT_BASE | (arbitration_id & 0x7FF)
-    return arbitration_id
+def normalize_legacy_rx_id(
+    arbitration_id: int, *, is_extended: bool = False, legacy_11bit: bool = True
+) -> int:
+    """V3 RX IDs are already standard 11-bit — mask and return as-is."""
+    return int(arbitration_id) & 0x7FF
+
 
 SECURE_TLV_TYPE_CONFIG_REQUEST = 1
 SECURE_TLV_TYPE_CONFIG_RESPONSE = 2
@@ -110,6 +160,7 @@ PIN_ROLE_MAP = {
     "SHUTTER_DOWN": 9,
     "MCP23017": 10,
     "NTC": 11,
+    "WS2812": 12,
 }
 
 NTC_RSERIES_CHOICES = {
@@ -166,6 +217,156 @@ STATE_LABEL_BY_CODE = {
     1: "Zalacz",
     2: "Przelacz",
 }
+
+BIND_RELAY_STATE_USE_PULSE = 3
+BIND_RELAY_STATE_TIMED_MIN = 128
+BINDING_FLAG_TIMED = 0x01
+BIND_FLAG_TIMED_SEC = BINDING_FLAG_TIMED
+BINDING_FLAG_USE_RELAY_PULSE = 0x02
+BIND_FLAG_USE_RELAY_PULSE = BINDING_FLAG_USE_RELAY_PULSE
+
+
+def format_binding_state_label(code: int) -> str:
+    code = int(code)
+    if code == BIND_RELAY_STATE_USE_PULSE:
+        return "Impuls przekaznika"
+    if code >= BIND_RELAY_STATE_TIMED_MIN:
+        return f"Czasowe {code - BIND_RELAY_STATE_TIMED_MIN} min"
+    return STATE_LABEL_BY_CODE.get(code, str(code))
+
+
+def parse_binding_state_label(state_label: str) -> tuple[int, int]:
+    label = (state_label or "").strip()
+    if label.lower().startswith("impuls przek"):
+        return BIND_RELAY_STATE_USE_PULSE, 0
+    if label.lower().startswith("czasowe"):
+        parts = label.split()
+        if len(parts) >= 2 and parts[1].isdigit():
+            mins = int(parts[1])
+            if mins < 1 or mins > 127:
+                raise ValueError("Automat czasowy: 1..127 minut")
+            return 1, mins
+        raise ValueError(f"Nieprawidlowy format automatu czasowego: {state_label!r}")
+    mapped = STATE_MAP.get(label)
+    if mapped is None:
+        raise ValueError(f"Nieznany stan mapowania: {state_label!r}")
+    return int(mapped), 0
+
+
+def pack_set_binding_args(
+    source_module: int,
+    button: int,
+    action: int,
+    relay: int,
+    relay_state: int,
+    *,
+    timed_min: int = 0,
+    use_relay_pulse: bool = False,
+) -> list[int]:
+    relay_state = int(relay_state)
+    if relay_state == BIND_RELAY_STATE_USE_PULSE:
+        use_relay_pulse = True
+        relay_state = 1
+    if relay_state > 2:
+        raise ValueError("relay_state musi byc 0..2 (permanent), 3 (impuls) lub uzyj timed_min")
+    args = [
+        int(source_module) & 0xFF,
+        int(button) & 0xFF,
+        int(action) & 0xFF,
+        int(relay) & 0xFF,
+        relay_state,
+    ]
+    timed_min = int(timed_min)
+    if timed_min > 0:
+        if timed_min > 127:
+            raise ValueError("Automat czasowy: maks. 127 minut")
+        args.append(BINDING_FLAG_TIMED | ((timed_min & 0x7F) << 1))
+    elif use_relay_pulse:
+        args.append(BINDING_FLAG_USE_RELAY_PULSE)
+    return args
+
+
+def binding_state_label_to_wire(state_label: str, *, timed_min: int = 0) -> int:
+    relay_state, mins = parse_binding_state_label(state_label)
+    if timed_min > 0:
+        mins = timed_min
+    if mins > 0:
+        return BIND_RELAY_STATE_TIMED_MIN + mins
+    return relay_state
+
+
+def pack_set_relay_link_args(
+    src_relay: int,
+    trigger: int,
+    target_module: int,
+    target_relay: int,
+    target_state: int,
+) -> list[int]:
+    return [
+        int(src_relay) & 0xFF,
+        int(trigger) & 0xFF,
+        int(target_module) & 0xFF,
+        int(target_relay) & 0xFF,
+        int(target_state) & 0xFF,
+    ]
+
+
+def pack_set_relay_bind_route_args(
+    button: int,
+    action: int,
+    target_module: int,
+    relay: int,
+    relay_state: int,
+) -> list[int]:
+    return [
+        int(button) & 0xFF,
+        int(action) & 0xFF,
+        int(target_module) & 0xFF,
+        int(relay) & 0xFF,
+        int(relay_state) & 0xFF,
+    ]
+
+
+def _rgb332_pack(r: int, g: int, b: int) -> int:
+    r = int(r) & 0xFF
+    g = int(g) & 0xFF
+    b = int(b) & 0xFF
+    return ((r & 0xE0) | ((g & 0xE0) >> 3) | ((b & 0xC0) >> 6)) & 0xFF
+
+
+def _kelvin_to_byte(kelvin: int) -> int:
+    k = max(2700, min(6500, int(kelvin)))
+    return int((k - 2700) * 255 / (6500 - 2700)) & 0xFF
+
+
+def pack_set_led_binding_args(
+    source_module: int,
+    button: int,
+    action: int,
+    effect_id: int,
+    duration_s: int,
+    r: int,
+    g: int,
+    b: int,
+    strip_index: int = 1,
+    *,
+    strip_type: int = 0,
+    kelvin: int | None = None,
+) -> list[int]:
+    meta = (int(strip_index) & 0x0F) | ((int(effect_id) & 0x07) << 4)
+    if int(strip_type) == 1:
+        color_byte = _kelvin_to_byte(kelvin if kelvin is not None else 2700)
+    else:
+        color_byte = _rgb332_pack(r, g, b)
+    return [
+        int(source_module) & 0xFF,
+        int(button) & 0xFF,
+        int(action) & 0xFF,
+        meta,
+        int(duration_s) & 0xFF,
+        color_byte & 0xFF,
+    ]
+
 
 BINARY_EDGE_LABELS = {
     "Rosnace": 1,
@@ -258,6 +459,66 @@ COMMAND_GET_SENSOR_BIND_ROUTE_COUNT  = 99  # resp: count, max
 COMMAND_GET_SENSOR_BIND_ROUTE        = 100  # arg: index -> resp: sensor_kind, sensor_idx, threshold_u8, target_module_id, target_relay
 COMMAND_SET_NTC_PARAMS               = 101  # args: sensor_idx, r25_lo, r25_hi, beta_lo, beta_hi
 COMMAND_GET_NTC_PARAMS               = 102  # arg: sensor_idx -> resp: sensor_idx, r25_lo, r25_hi, beta_lo, beta_hi
+COMMAND_SET_LED_STRIP_CONFIG         = 109  # wire: (type<<4)|idx, gpio, count_lo/hi, brightness, idle_effect
+COMMAND_GET_LED_STRIP_CONFIG         = 110  # arg: strip_idx; resp: gpio|(type<<7), count, brightness, idle_effect, rgb332|kelvin
+COMMAND_SET_LED_EFFECT               = 111  # new: strip_idx, effect_id, duration_s, r, gb_packed
+COMMAND_SET_LED_BINDING              = 112  # new: strip_idx, src_mod, btn, action, effect_id, duration_s, r, gb_packed
+COMMAND_CLEAR_LED_BINDINGS           = 113
+COMMAND_GET_LED_BINDING_COUNT        = 114  # resp: count, max
+COMMAND_GET_LED_BINDING              = 115  # arg: idx -> resp: src_mod, btn, action, effect_id, duration_s, r, gb_packed
+COMMAND_SET_RELAY_LINK               = 116  # args: src_relay, trigger, target_module, target_relay, target_state
+COMMAND_CLEAR_RELAY_LINKS            = 117
+COMMAND_GET_RELAY_LINK_COUNT         = 118  # resp: count, max
+COMMAND_GET_RELAY_LINK               = 119  # arg: index -> resp: src_relay, trigger, target_module, target_relay, target_state
+
+RELAY_LINK_TRIGGER_ON = 1
+RELAY_LINK_TRIGGER_OFF = 2
+RELAY_LINK_TRIGGER_ANY = 3
+RELAY_LINK_TRIGGER_MIRROR = 4
+
+RELAY_LINK_TRIGGER_NAME = {
+    RELAY_LINK_TRIGGER_ON: "Włączenie (ON)",
+    RELAY_LINK_TRIGGER_OFF: "Wyłączenie (OFF)",
+    RELAY_LINK_TRIGGER_ANY: "Zmiana stanu",
+    RELAY_LINK_TRIGGER_MIRROR: "Lustro (kopiuj stan)",
+}
+
+
+def unpack_get_relay_link_response(data: list[int] | tuple[int, ...]) -> tuple[int, int, int, int, int]:
+    """Decode GET_RELAY_LINK (119) response fields data[3..7]."""
+    if len(data) < 8:
+        raise ValueError("GET_RELAY_LINK response too short")
+    return (
+        int(data[3]) & 0xFF,
+        int(data[4]) & 0xFF,
+        int(data[5]) & 0xFF,
+        int(data[6]) & 0xFF,
+        int(data[7]) & 0xFF,
+    )
+
+
+def unpack_get_led_binding_response(payload: list[int]) -> dict:
+    """Decode GET_LED_BINDING (115) CONFIG_RESPONSE payload."""
+    if len(payload) < 8:
+        raise ValueError("GET_LED_BINDING response too short")
+    status = int(payload[2]) & 0xFF
+    strip_index = int(payload[3]) & 0x0F or 1
+    source_module = int(payload[4]) & 0xFF
+    button = int(payload[5]) & 0xFF
+    action = int(payload[6]) & 0xFF
+    meta = int(payload[7]) & 0xFF
+    effect_id = meta & 0x07
+    duration_s = (meta >> 3) & 0x1F
+    return {
+        "status": status,
+        "strip_index": strip_index,
+        "source_module": source_module,
+        "button": button,
+        "action": action,
+        "effect_id": effect_id,
+        "duration_s": duration_s,
+    }
+
 COMMAND_GET_MCP23017_ROLE_DUMP        = 70  # args: chip_idx → resp: chip_idx, b0,b1,b2,b3 (16 pinów × 2 bity)
 COMMAND_GET_SHIFT595_DUMP             = 71  # resp: register_count, data, clock, latch, oe
 
@@ -285,6 +546,12 @@ OTA_BATCH_FRAMES = 64
 
 
 MAX_SHUTTERS = 28
+
+# Najwyzszy fizyczny numer GPIO (ESP32-S3 = 48). W V3 wszystkie podramki telemetryczne
+# dziela klase STATE_TELEMETRY; do odroznienia RELAY_GPIO_MAP od DEVICE_INFO sprawdzamy,
+# czy bajty 2..7 to numery GPIO (<=48) lub 0xFF; realny MAC ma zwykle bajt > 48.
+STATE_TELEMETRY_MAX_GPIO_NUM = 48
+
 SHUTTER_TRAVEL_DS_MIN = 10
 SHUTTER_TRAVEL_DS_MAX = 6000
 SHUTTER_DIR_STOPPED = 0

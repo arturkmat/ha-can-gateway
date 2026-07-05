@@ -1,5 +1,5 @@
 name: CAN Gateway
-version: "0.5.0"
+version: "0.5.1"
 slug: can_gateway
 description: CAN bus gateway (SLCAN / gs_usb), web panel and REST API for Home Assistant.
 url: https://github.com/arturkmat/ha-can-gateway
@@ -27,7 +27,7 @@ options:
   can_interface: slcan
   can_port: /dev/ttyACM0
   gsusb_channel: 0
-  can_bitrate: 250000
+  can_bitrate: 125000
   tty_baudrate: 115200
   master_key_hex: ""
   auto_scan: true

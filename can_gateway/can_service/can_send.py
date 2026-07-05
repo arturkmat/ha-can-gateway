@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 from protocol_constants import (
-    CAN_ID_CONFIG_REQUEST,
-    CAN_ID_SECURE_TLV_REQUEST,
-    CAN_ID_SECURE_TLV_RESPONSE,
-    PLAINTEXT_TELEMETRY_CAN_IDS,
+    CAN_V2_CLASS_CONFIG_REQUEST,
+    can_v2_frame_class,
+    is_plaintext_telemetry_id,
 )
 from can_secure_transport import SecureCanTransport, is_plaintext_bootstrap_tx
-
-_PREWRAPPED_CAN_IDS = frozenset({CAN_ID_SECURE_TLV_REQUEST, CAN_ID_SECURE_TLV_RESPONSE})
 
 
 def prepare_outgoing_frames(
@@ -22,23 +19,18 @@ def prepare_outgoing_frames(
     raw = bytes(int(b) & 0xFF for b in data)
     padded = list(raw) + [0] * (8 - len(raw))
 
-    # Już zsegmentowane ramki Secure TLV — nie owijaj ponownie (regresja wydajności HA).
-    if can_id in _PREWRAPPED_CAN_IDS:
-        return [(can_id, padded)]
-
     if is_plaintext_bootstrap_tx(can_id, raw):
         return [(can_id, padded)]
 
     if transport is None:
-        if can_id in PLAINTEXT_TELEMETRY_CAN_IDS:
+        if is_plaintext_telemetry_id(can_id):
             return [(can_id, padded)]
         return None
 
-    # Modul bez klucza — telemetry/komendy (0x650) plaintext.
-    if can_id in PLAINTEXT_TELEMETRY_CAN_IDS and module_has_master_key is False:
+    if is_plaintext_telemetry_id(can_id) and module_has_master_key is False:
         return [(can_id, padded)]
 
-    if can_id == CAN_ID_CONFIG_REQUEST:
+    if can_v2_frame_class(can_id) == CAN_V2_CLASS_CONFIG_REQUEST:
         frames = transport.build_secure_config_request(module_id, data)
     else:
         frames = transport.wrap_outgoing(module_id, can_id, data)
