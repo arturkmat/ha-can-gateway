@@ -1,9 +1,14 @@
 #!/usr/bin/with-contenv bashio
 # =============================================================================
 # CAN Gateway add-on — SLCAN / gs_usb + web panel (Ingress) + REST API
+# Bundled can_gateway_v3 integration deploy + Supervisor discovery on start.
 # =============================================================================
 
 bashio::log.info "CAN Gateway add-on starting..."
+
+if [[ -x /deploy_integration.sh ]]; then
+  /deploy_integration.sh
+fi
 
 CAN_INTERFACE="$(bashio::config 'can_interface')"
 CAN_PORT="$(bashio::config 'can_port')"
@@ -26,6 +31,12 @@ elif [[ "${CAN_INTERFACE}" == "gs_usb" ]]; then
   bashio::log.info "gs_usb channel ${GSUSB_CHANNEL} — port szeregowy nie jest uzywany"
 else
   bashio::log.warning "Nieznany can_interface=${CAN_INTERFACE} — uzyj slcan lub gs_usb"
+fi
+
+if [[ -x /discovery.sh ]]; then
+  (
+    /discovery.sh
+  ) &
 fi
 
 cd /opt || exit 1

@@ -1,7 +1,7 @@
 name: CAN Gateway
-version: "0.5.1"
+version: "0.6.0"
 slug: can_gateway
-description: CAN bus gateway (SLCAN / gs_usb), web panel and REST API for Home Assistant.
+description: CAN bus gateway (SLCAN / gs_usb), web panel, REST API and auto-setup of can_gateway_v3 integration.
 url: https://github.com/arturkmat/ha-can-gateway
 arch:
   - aarch64
@@ -15,8 +15,13 @@ ingress_port: 8099
 panel_icon: mdi:lan-connect
 panel_title: CAN Gateway
 homeassistant: "2024.1.0"
+discovery:
+  - can_gateway_v3
 hassio_api: true
+homeassistant_api: true
 hassio_role: default
+map:
+  - homeassistant_config:rw
 uart: true
 usb: true
 devices:
