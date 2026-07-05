@@ -95,3 +95,21 @@ def test_build_entities_snapshot_deduplicates():
     mod = _sample_module()
     snapshot = build_entities_snapshot([mod, mod])
     assert len(snapshot) == len(build_entities_for_module(mod))
+
+
+def test_build_entities_from_summary_counts_only():
+    mod = {
+        "module_id": 7,
+        "name": "Garaz",
+        "button_count": 1,
+        "relay_count": 2,
+        "shutter_count": 1,
+        "summary_details": "buttons=1 relays=2 ds18=0 shutters=1",
+    }
+    entities = build_entities_for_module(mod)
+    uids = {e["unique_id"] for e in entities}
+    assert "m7_online" in uids
+    assert "m7_local_relay1" in uids
+    assert "m7_local_relay2" in uids
+    assert "m7_shutter1" in uids
+    assert "m7_btn1_action" in uids

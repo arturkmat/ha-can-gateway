@@ -11,6 +11,22 @@ CAN_INTERFACE_SLCAN = "slcan"
 CAN_INTERFACE_GS_USB = "gs_usb"
 
 
+def _parse_bool(value: object, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("1", "true", "yes", "on"):
+            return True
+        if normalized in ("0", "false", "no", "off", ""):
+            return False
+    if value is None:
+        return default
+    return bool(value)
+
+
 @dataclass(slots=True)
 class AddonOptions:
     can_interface: str
@@ -51,11 +67,11 @@ def load_options() -> AddonOptions:
         gsusb_channel=int(raw.get("gsusb_channel", 0)),
         can_bitrate=int(raw.get("can_bitrate", 125000)),
         tty_baudrate=int(raw.get("tty_baudrate", 115200)),
-        secure_can=bool(raw.get("secure_can", False)),
+        secure_can=_parse_bool(raw.get("secure_can"), False),
         master_key_hex=str(raw.get("master_key_hex", "")),
-        auto_scan=bool(raw.get("auto_scan", True)),
+        auto_scan=_parse_bool(raw.get("auto_scan"), True),
         auto_scan_interval_s=int(raw.get("auto_scan_interval_s", 10)),
-        mqtt_enabled=bool(raw.get("mqtt_enabled", False)),
+        mqtt_enabled=_parse_bool(raw.get("mqtt_enabled"), False),
         mqtt_host=str(raw.get("mqtt_host", "core-mosquitto")),
         mqtt_port=int(raw.get("mqtt_port", 1883)),
         mqtt_username=str(raw.get("mqtt_username", "")),

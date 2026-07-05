@@ -32,7 +32,17 @@ from .shutter_config_service import clear_shutter, get_shutter_config, set_shutt
 from .tab_load_service import load_module_tab
 
 _LOGGER = logging.getLogger(__name__)
-STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+def _resolve_static_dir() -> Path:
+    here = Path(__file__).resolve().parent
+    for candidate in (here / "static", here.parent / "static"):
+        if (candidate / "index.html").is_file():
+            return candidate
+    return here / "static"
+
+
+STATIC_DIR = _resolve_static_dir()
 
 
 def _json_error(message: str, status: int = 400) -> web.Response:
@@ -475,7 +485,8 @@ def create_app(bus: BusManager) -> web.Application:
     async def index(_request: web.Request) -> web.Response:
         index_path = STATIC_DIR / "index.html"
         if not index_path.is_file():
-            return web.Response(text="CAN Gateway — brak index.html", content_type="text/plain")
+            _LOGGER.error("Ingress UI missing index.html (STATIC_DIR=%s)", STATIC_DIR)
+            return web.Response(text="CAN Gateway — brak index.html", content_type="text/plain", status=503)
         return web.FileResponse(index_path)
 
     app.router.add_get("/", index)
@@ -540,16 +551,26 @@ async def run_server(
     await mqtt.start()
 
     background: list[asyncio.Task] = []
-    if bus.bus_ok and options.master_key_bytes is not None:
+    if not STATIC_DIR.joinpath("index.html").is_file():
+        _LOGGER.warning("Panel Ingress: brak %s/index.html", STATIC_DIR)
+    else:
+        _LOGGER.info("Panel Ingress: static files from %s", STATIC_DIR)
+
+    scan_allowed = not options.secure_can or options.master_key_bytes is not None
+    if bus.bus_ok and scan_allowed:
+        if not options.secure_can:
+            _LOGGER.info("V3 plain CAN — skan startowy bez klucza")
         background.append(asyncio.create_task(_initial_scan(bus)))
-    elif bus.bus_ok:
+    elif bus.bus_ok and options.secure_can:
         _LOGGER.warning(
-            "Pominięto skan startowy — brak master_key_hex (Ustaw master_key_hex w konfiguracji dodatku)"
+            "Pominięto skan startowy — secure_can=true wymaga poprawnego master_key_hex (64 znaki hex)"
         )
-    if options.auto_scan and options.master_key_bytes is not None:
+    if options.auto_scan and scan_allowed:
+        if not options.secure_can:
+            _LOGGER.info("V3 plain CAN — auto_scan bez klucza co %ds", options.auto_scan_interval_s)
         background.append(asyncio.create_task(_auto_scan_loop(bus, options.auto_scan_interval_s)))
-    elif options.auto_scan:
-        _LOGGER.warning("auto_scan wyłączony — brak master_key_hex w konfiguracji dodatku")
+    elif options.auto_scan and options.secure_can:
+        _LOGGER.warning("auto_scan wyłączony — secure_can=true bez poprawnego master_key_hex")
     background.append(asyncio.create_task(_relay_telemetry_loop(bus)))
 
     try:

@@ -249,13 +249,17 @@ class BusManager:
                 "master_key_invalid": master_invalid,
                 "master_key_required_hint": (
                     None
-                    if master_ok
-                    else "Ustaw master_key_hex w konfiguracji dodatku (64 znaki hex) dla modułów Secure CAN"
+                    if not self._options.secure_can
+                    else (
+                        None
+                        if master_ok
+                        else "Ustaw master_key_hex w konfiguracji dodatku (64 znaki hex) dla modułów Secure CAN"
+                    )
                 ),
                 "module_count": len(self._modules),
                 "last_scan_status": self._last_scan_status,
                 "last_scan_at": self._last_scan_at,
-                "version": "0.6.1",
+                "version": "0.6.2",
                 "mqtt_enabled": self._options.mqtt_enabled,
             }
 
@@ -990,7 +994,18 @@ class BusManager:
             secure_can=self._options.secure_can,
         )
         if not frames:
-            _LOGGER.warning("TX blocked can_id=0x%X module=%s", can_id, module_id)
+            if self._options.secure_can:
+                _LOGGER.warning(
+                    "TX blocked can_id=0x%X module=%s (secure_can=true — brak klucza/MAC?)",
+                    can_id,
+                    module_id,
+                )
+            else:
+                _LOGGER.error(
+                    "TX blocked can_id=0x%X module=%s mimo secure_can=false — sprawdź can_send",
+                    can_id,
+                    module_id,
+                )
             return False
         import can
 
@@ -1087,7 +1102,14 @@ class BusManager:
                 self.refresh_relay_telemetry(0.8)
             except Exception:  # noqa: BLE001
                 _LOGGER.debug("Post-scan relay telemetry failed", exc_info=True)
-            if self._options.master_key_bytes is not None:
+            if self._options.secure_can and self._options.master_key_bytes is not None:
+                for rec in self._get_engine().list_modules():
+                    mid = int(rec["module_id"])
+                    try:
+                        _refresh_module_deep_impl(self, mid)
+                    except Exception:  # noqa: BLE001
+                        _LOGGER.debug("Deep refresh module %s failed", mid, exc_info=True)
+            elif not self._options.secure_can:
                 for rec in self._get_engine().list_modules():
                     mid = int(rec["module_id"])
                     try:

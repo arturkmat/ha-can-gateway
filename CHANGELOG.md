@@ -1,5 +1,16 @@
 # Changelog — ha-can-gateway
 
+## 2026-07-05 (v0.6.2)
+
+### fix: V3 plain CAN — TX nie blokowany, skan/auto_scan bez master_key, Ingress UI
+
+- **`configurator_bridge`:** `prepare_outgoing_frames` przekazuje `secure_can` i `module_has_master_key` do `can_send` (wcześniej brak flagi → CONFIG poza discovery był blokowany przy `send_raw` / deep refresh).
+- **`app.py`:** skan startowy i `auto_scan` działają gdy `secure_can=false` bez `master_key_hex`; komunikaty „V3 plain CAN — skan bez klucza” zamiast mylących ostrzeżeń.
+- **`options.py`:** poprawne parsowanie bool (`"false"` nie jest już traktowane jako true).
+- **`bus_manager`:** deep refresh po skanie także w trybie plain CAN; `master_key_required_hint` null gdy `secure_can=false`.
+- **Ingress UI:** `_resolve_static_dir()` + weryfikacja `static/` w Dockerfile; banner MASTER_KEY ukryty przy plain CAN.
+- **Testy:** `tests/test_can_send_plaintext.py`, encje z samego summary w `test_entity_export` / `test_can_gateway_v3_addon_sync`.
+
 ## 2026-07-05 (v0.6.1)
 
 ### fix: scan-only add-on UI + MASTER_KEY graceful scan + auto entity import

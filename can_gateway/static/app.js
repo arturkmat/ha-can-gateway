@@ -30,6 +30,11 @@ function connectionLabel(st) {
 
 function updateKeyBanner(st) {
   const banner = $("key-banner");
+  if (!st.secure_enabled) {
+    banner.hidden = true;
+    banner.textContent = "";
+    return;
+  }
   if (st.master_key_configured) {
     banner.hidden = true;
     banner.textContent = "";

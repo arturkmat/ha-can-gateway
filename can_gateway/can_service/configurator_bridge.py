@@ -32,7 +32,19 @@ class _BusIoAdapter:
         self, target_module_id: int, can_id: int, data: list[int]
     ) -> list[tuple[int, list[int]]] | None:
         self._bus._ensure_transport_macs()  # noqa: SLF001
-        return prepare_outgoing_frames(self._bus._transport, target_module_id, can_id, data)  # noqa: SLF001
+        module_has_key: bool | None = None
+        if target_module_id not in UNKNOWN_MODULE_IDS:
+            module_has_key = self._bus._get_engine()._module_has_master_key_for_tx(  # noqa: SLF001
+                int(target_module_id)
+            )
+        return prepare_outgoing_frames(
+            self._bus._transport,  # noqa: SLF001
+            target_module_id,
+            can_id,
+            data,
+            module_has_master_key=module_has_key,
+            secure_can=self._bus._options.secure_can,  # noqa: SLF001
+        )
 
     def send_can_frame(self, frame_id: int, data: list[int]) -> None:
         import can

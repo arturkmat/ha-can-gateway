@@ -17,6 +17,8 @@ COPY integration/can_gateway_v3 /opt/integration/can_gateway_v3
 
 RUN PYTHONPATH=/lib python3 -c "import serial; from configurator_engine import ConfiguratorEngine; from protocol_constants import can_v2_config_request_id; print('deps ok', serial.__version__, hex(can_v2_config_request_id(1)))"
 
+RUN test -f /opt/can_service/static/index.html && test -f /opt/can_service/static/app.js
+
 WORKDIR /opt
 
 CMD [ "/run.sh" ]

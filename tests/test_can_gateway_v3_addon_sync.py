@@ -106,3 +106,60 @@ def test_seed_coordinator_from_addon_modules():
     assert info.relay_gpio_map[1] == 7
     assert "m5_online" in coordinator.entity_descriptions
     assert const.DOMAIN == "can_gateway_v3"
+
+
+def test_apply_addon_entities_from_summary_snapshot():
+    _mock_homeassistant()
+    _ensure_package("custom_components", COMP.parent)
+    _ensure_package("custom_components.can_gateway_v3", COMP)
+    const = _load_in_package("const", COMP / "const.py", "custom_components.can_gateway_v3")
+    led_protocol = _load_in_package(
+        "led_protocol", COMP / "led_protocol.py", "custom_components.can_gateway_v3"
+    )
+    protocol = _load_in_package("protocol", COMP / "protocol.py", "custom_components.can_gateway_v3")
+    coordinator_mod = _load_in_package(
+        "coordinator", COMP / "coordinator.py", "custom_components.can_gateway_v3"
+    )
+    addon_sync = _load_in_package(
+        "addon_sync", COMP / "addon_sync.py", "custom_components.can_gateway_v3"
+    )
+
+    del led_protocol, protocol, const
+
+    coordinator = coordinator_mod.CanGatewayCoordinator(
+        SimpleNamespace(loop=SimpleNamespace(is_running=lambda: False))
+    )
+    snapshot = {
+        "modules": [
+            {
+                "module_id": 3,
+                "name": "Salon",
+                "button_count": 1,
+                "relay_count": 2,
+                "shutter_count": 0,
+            }
+        ],
+        "entities": [
+            {
+                "platform": "switch",
+                "unique_id": "m3_local_relay1",
+                "name": "CAN M3 Relay 1",
+                "module_id": 3,
+                "value": False,
+                "attributes": {"module_id": 3, "relay_no": 1},
+            },
+            {
+                "platform": "binary_sensor",
+                "unique_id": "m3_online",
+                "name": "CAN M3 Online",
+                "module_id": 3,
+                "value": True,
+                "attributes": {"module_id": 3},
+            },
+        ],
+    }
+    addon_sync.apply_addon_state(coordinator, snapshot)
+
+    assert 3 in coordinator.scanned_modules
+    assert "m3_local_relay1" in coordinator.entity_descriptions
+    assert coordinator.entity_states["m3_local_relay1"].value is False
