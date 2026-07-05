@@ -15,19 +15,21 @@ Firmware, konfigurator Windows i dokumentacja protokołu CAN: [can-control-suite
 ## Instalacja (Home Assistant OS / Supervised) — zalecane
 
 1. **Ustawienia → Dodatki → Sklep dodatków → ⋮ → Repozytoria**
-2. Dodaj: `https://github.com/arturkmat/ha-can-gateway`
-3. Odśwież sklep, zainstaluj **CAN Gateway**, ustaw `can_port`, `can_bitrate` (**125000**) oraz `master_key_hex` (64 znaki hex), uruchom dodatek.
-4. **Gotowe** — dodatek kopiuje `can_gateway_v3` do `/config/custom_components/`, przeładowuje custom components i wysyła discovery Supervisor; HA tworzy wpis integracji automatycznie (`connection_mode=addon`).
+2. Dodaj URL (musi być pełny adres GitHub, **nie** ścieżka katalogu):
+   `https://github.com/arturkmat/ha-can-gateway`
+3. Odśwież sklep dodatków, zainstaluj **CAN Gateway**, ustaw `can_port` i `can_bitrate` (**125000**), uruchom dodatek.
+4. Dla firmware **V3 nie ustawiaj** `master_key_hex` — domyślnie `secure_can: false` (plain CAN). Opcja `secure_can: true` + klucz tylko dla legacy modułów ze szyfrowaniem.
+5. **Gotowe** — dodatek kopiuje `can_gateway_v3` do `/config/custom_components/`, przeładowuje custom components i wysyła discovery Supervisor; HA tworzy wpis integracji automatycznie (`connection_mode=addon`).
 
 Panel: **Ustawienia → Dodatki → CAN Gateway → Otwórz panel web** — tylko **Skanuj magistralę** i lista modułów. Encje w HA pojawiają się automatycznie (integracja nasłuchuje `/api/discovery`).
 
-### Kroki użytkownika (Secure CAN)
+### Legacy Secure CAN (opcjonalnie)
 
-1. W ustawieniach dodatku ustaw **`master_key_hex`** (64 znaki hex — ten sam co w konfiguratorze Windows).
-2. Ustaw **`can_bitrate`: 125000** (protokół CAN v2).
-3. Otwórz panel dodatku → **Skanuj magistralę**.
-4. Sprawdź **Ustawienia → Urządzenia i usługi → CAN Gateway v3** — encje switch/cover/sensor powinny pojawić się w ciągu ~10 s (poll discovery).
-5. Jeśli integracja nie przeładowała się po aktualizacji dodatku: **Ustawienia → System → Urządzenia i usługi → ⋮ → Przeładuj konfigurację YAML** lub restart HA.
+Tylko moduły ze starym firmware wymagającym szyfrowania:
+
+1. W ustawieniach dodatku ustaw **`secure_can: true`** oraz **`master_key_hex`** (64 znaki hex).
+2. Otwórz panel dodatku → **Skanuj magistralę**.
+3. Sprawdź **Ustawienia → Urządzenia i usługi → CAN Gateway v3** — encje powinny pojawić się w ciągu ~10 s.
 
 ## Instalacja integracji (HACS / direct serial)
 

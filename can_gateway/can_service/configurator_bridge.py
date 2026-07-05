@@ -101,9 +101,10 @@ def _read_mappings(engine: ConfiguratorEngine, module_id: int) -> dict[str, Any]
 
 
 def create_engine(bus: BusManager) -> ConfiguratorEngine:
-    master = bus._options.master_key_bytes  # noqa: SLF001
+    master = bus._options.master_key_bytes if bus._options.secure_can else None  # noqa: SLF001
     return ConfiguratorEngine(
         _BusIoAdapter(bus),
         master_key=master,
+        secure_can=bus._options.secure_can,  # noqa: SLF001
         read_mappings=_read_mappings,
     )

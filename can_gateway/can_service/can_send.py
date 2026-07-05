@@ -15,11 +15,15 @@ def prepare_outgoing_frames(
     data: list[int],
     *,
     module_has_master_key: bool | None = None,
+    secure_can: bool = False,
 ) -> list[tuple[int, list[int]]] | None:
     raw = bytes(int(b) & 0xFF for b in data)
     padded = list(raw) + [0] * (8 - len(raw))
 
-    if is_plaintext_bootstrap_tx(can_id, raw):
+    if not secure_can:
+        return [(can_id, padded)]
+
+    if is_plaintext_bootstrap_tx(can_id, raw, module_has_master_key=bool(module_has_master_key)):
         return [(can_id, padded)]
 
     if transport is None:

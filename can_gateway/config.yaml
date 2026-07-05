@@ -34,6 +34,7 @@ options:
   gsusb_channel: 0
   can_bitrate: 125000
   tty_baudrate: 115200
+  secure_can: false
   master_key_hex: ""
   auto_scan: true
   auto_scan_interval_s: 10
@@ -50,6 +51,7 @@ schema:
   gsusb_channel: int(0,15)
   can_bitrate: list(125000|250000|500000)
   tty_baudrate: list(115200|460800)
+  secure_can: bool
   master_key_hex: str
   auto_scan: bool
   auto_scan_interval_s: int(5,120)

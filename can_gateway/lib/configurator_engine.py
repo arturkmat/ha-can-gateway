@@ -132,10 +132,12 @@ class ConfiguratorEngine:
         io: CanIoBackend,
         *,
         master_key: bytes | None = None,
+        secure_can: bool = False,
         read_mappings: Callable[[ConfiguratorEngine, int], dict[str, Any]] | None = None,
     ) -> None:
         self._io = io
-        self._master_key = master_key
+        self._secure_can = bool(secure_can)
+        self._master_key = master_key if self._secure_can else None
         self._read_mappings = read_mappings
         self._io_lock = threading.RLock()
         self._io_depth = 0
@@ -261,10 +263,11 @@ class ConfiguratorEngine:
             for module_id in sorted(touched_ids):
                 if module_id in UNKNOWN_MODULE_IDS:
                     continue
-                try:
-                    self._sync_module_master_key_state(module_id)
-                except Exception as err:  # noqa: BLE001
-                    warnings.append(f"ID={module_id} MASTER_KEY state: {err}")
+                if self._secure_can:
+                    try:
+                        self._sync_module_master_key_state(module_id)
+                    except Exception as err:  # noqa: BLE001
+                        warnings.append(f"ID={module_id} MASTER_KEY state: {err}")
                 try:
                     name = self._read_module_name(module_id)
                     if name:
@@ -284,14 +287,14 @@ class ConfiguratorEngine:
             self._io.sync_transport_macs()
             if touched_ids:
                 try:
-                    active_relay_read = self._master_key is not None
+                    active_relay_read = not self._secure_can or self._master_key is not None
                     self.refresh_all_module_relay_states(
                         passive_timeout_s=1.5,
                         active=active_relay_read,
                     )
-                    if not active_relay_read:
+                    if self._secure_can and not active_relay_read:
                         warnings.append(
-                            "Ustaw master_key_hex w konfiguracji dodatku — "
+                            "Ustaw master_key_hex przy secure_can=true — "
                             "pominięto aktywny odczyt GPIO/relay (tylko telemetria pasywna)"
                         )
                 except Exception as err:  # noqa: BLE001
@@ -645,9 +648,10 @@ class ConfiguratorEngine:
         self.set_current_module(module_id)
 
         if tab_index == TAB_MODULES:
-            steps.append(("Stan MASTER_KEY...", lambda: self._sync_module_master_key_state(module_id)))
-            steps.append(("Weryfikacja MASTER_KEY...", lambda: self._probe_module_key_match(module_id)))
-            if not self._module_key_mismatch_detected(module_id):
+            if self._secure_can:
+                steps.append(("Stan MASTER_KEY...", lambda: self._sync_module_master_key_state(module_id)))
+                steps.append(("Weryfikacja MASTER_KEY...", lambda: self._probe_module_key_match(module_id)))
+            if not self._secure_can or not self._module_key_mismatch_detected(module_id):
                 steps.append(("Podsumowanie modulu...", lambda: self.get_summary(include_gpio_roles=False)))
             return steps
 
@@ -1243,6 +1247,8 @@ class ConfiguratorEngine:
             self._module_key_mismatch.add(module_id)
 
     def _module_has_master_key(self, module_id: int) -> bool:
+        if not self._secure_can:
+            return True
         if module_id in UNKNOWN_MODULE_IDS:
             return False
         for item in self.discovered_modules:
@@ -1257,6 +1263,8 @@ class ConfiguratorEngine:
 
     def _module_has_master_key_for_tx(self, module_id: int) -> bool:
         """Decyzja TX: nieznany stan klucza + host z MASTER_KEY → szyfruj (0x650 itd.)."""
+        if not self._secure_can:
+            return False
         if module_id in UNKNOWN_MODULE_IDS:
             return False
         for item in self.discovered_modules:
@@ -1350,6 +1358,9 @@ class ConfiguratorEngine:
         self, target_module_id: int, can_id: int, data: list[int], *, log_traffic: bool = True
     ) -> None:
         raw = bytes(int(b) & 0xFF for b in data)
+        if not self._secure_can:
+            self._io.send_can_frame(can_id, list(raw))
+            return
         module_has_key = (
             target_module_id not in UNKNOWN_MODULE_IDS
             and self._module_has_master_key_for_tx(target_module_id)
@@ -1374,7 +1385,8 @@ class ConfiguratorEngine:
             self._io.send_can_frame(can_id, list(raw))
             return
         if self._master_key is None:
-            raise RuntimeError("MASTER_KEY required for secure CAN")
+            self._io.send_can_frame(can_id, list(raw))
+            return
         frames = self._io.prepare_outgoing_frames(target_module_id, can_id, data)
         if frames is None:
             raise RuntimeError(f"No MAC/key for module {target_module_id}")
@@ -1385,7 +1397,7 @@ class ConfiguratorEngine:
         self._io.sync_transport_macs()
 
     def _send_request_use_secure_tlv(self, target_id: int, payload: list[int]) -> bool:
-        if self._master_key is None or target_id in UNKNOWN_MODULE_IDS:
+        if not self._secure_can or self._master_key is None or target_id in UNKNOWN_MODULE_IDS:
             return False
         if not self._module_has_master_key(target_id):
             return False

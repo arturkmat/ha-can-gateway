@@ -18,6 +18,7 @@ class AddonOptions:
     gsusb_channel: int
     can_bitrate: int
     tty_baudrate: int
+    secure_can: bool
     master_key_hex: str
     auto_scan: bool
     auto_scan_interval_s: int
@@ -50,6 +51,7 @@ def load_options() -> AddonOptions:
         gsusb_channel=int(raw.get("gsusb_channel", 0)),
         can_bitrate=int(raw.get("can_bitrate", 125000)),
         tty_baudrate=int(raw.get("tty_baudrate", 115200)),
+        secure_can=bool(raw.get("secure_can", False)),
         master_key_hex=str(raw.get("master_key_hex", "")),
         auto_scan=bool(raw.get("auto_scan", True)),
         auto_scan_interval_s=int(raw.get("auto_scan_interval_s", 10)),

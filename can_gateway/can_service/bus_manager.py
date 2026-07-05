@@ -191,12 +191,17 @@ class BusManager:
         return self._engine
 
     def start(self) -> None:
-        master = self._options.master_key_bytes
-        if master is not None:
-            self._transport = SecureCanTransport(master_key=master)
-            _LOGGER.info("Secure CAN enabled (MASTER_KEY %d bytes)", len(master))
-        elif self._options.master_key_hex.strip():
-            _LOGGER.error("Niepoprawny MASTER_KEY — wymagane 64 znaki hex")
+        if self._options.secure_can:
+            master = self._options.master_key_bytes
+            if master is not None:
+                self._transport = SecureCanTransport(master_key=master)
+                _LOGGER.info("Secure CAN enabled (MASTER_KEY %d bytes)", len(master))
+            elif self._options.master_key_hex.strip():
+                _LOGGER.error("Niepoprawny MASTER_KEY — wymagane 64 znaki hex przy secure_can=true")
+        else:
+            if self._options.master_key_hex.strip():
+                _LOGGER.info("MASTER_KEY w opcjach ignorowany — secure_can=false (domyślny tryb V3)")
+            _LOGGER.info("Plain CAN mode (V3) — brak szyfrowania CONFIG")
         self._open_bus()
         self._rx_thread = threading.Thread(target=self._rx_loop, name="can-rx", daemon=True)
         self._rx_thread.start()
@@ -982,6 +987,7 @@ class BusManager:
             can_id,
             data,
             module_has_master_key=module_has_key,
+            secure_can=self._options.secure_can,
         )
         if not frames:
             _LOGGER.warning("TX blocked can_id=0x%X module=%s", can_id, module_id)
@@ -1012,6 +1018,7 @@ class BusManager:
             can_v2_ota_data_id(int(module_id)),
             data,
             module_has_master_key=module_has_key,
+            secure_can=self._options.secure_can,
         )
         if not frames:
             return False
