@@ -173,7 +173,21 @@ def create_app(bus: BusManager) -> web.Application:
                 body = {}
         command = str(body.get("command", "stop"))
         param = int(body.get("param", 0))
+        _LOGGER.info(
+            "Shutter command module=%s shutter=%s command=%s param=%s",
+            mid,
+            shutter_no,
+            command,
+            param,
+        )
         result = await asyncio.to_thread(bus.set_shutter_command, mid, shutter_no, command, param)
+        if not result.get("ok"):
+            _LOGGER.warning(
+                "Shutter command failed module=%s shutter=%s: %s",
+                mid,
+                shutter_no,
+                result.get("error", result),
+            )
         status = 200 if result.get("ok") else 503
         return web.json_response(result, status=status)
 

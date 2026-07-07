@@ -1,5 +1,15 @@
 # Changelog — ha-can-gateway
 
+## 2026-07-07 (add-on v0.7.4 + integration v3.5.4)
+
+### fix: cover/shutter control via HA integration (add-on mode)
+
+- **`configurator_engine.set_shutter_command`:** poprawny payload V3 `[V2_CTRL_SHUTTER_CMD, shutter_no, cmd, param]` (wcześniej błędnie `[module_id, shutter_no, …]` — firmware odrzucał ramkę).
+- **`can_gateway_v3/addon_setup`:** routing CONTROL_COMMAND przed skrótami CONFIG (reboot); `module_id` z CAN ID, nie z `data[0]`.
+- **`can_gateway_v3/cover.py`:** add-on mode woła REST `/api/modules/{id}/shutters/{no}`; `shutter_no` z atrybutów katalogu.
+- **`app.py`:** log INFO/WARNING przy `POST …/shutters/{no}`.
+- **Testy:** `test_shutter_command_encoding.py` — payload, CAN ID, regresja routingu.
+
 ## 2026-07-07 (add-on v0.7.3 + integration v3.5.3)
 
 ### fix: MCP23017 / 74HC595 entities missing after strict catalog (v0.7.2)

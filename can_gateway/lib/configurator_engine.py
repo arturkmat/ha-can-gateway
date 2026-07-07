@@ -48,6 +48,7 @@ from protocol_constants import (
     PIN_ROLE_MAP,
     SHIFT595_RELAY_BASE_INDEX,
     SHIFT595_RELAY_COUNT_PER_REGISTER,
+    SHUTTER_CMD_SET_POSITION,
     TELE_DEVICE_INFO,
     TELE_DIAGNOSTICS,
     TELE_GPIO_VALUE,
@@ -57,6 +58,7 @@ from protocol_constants import (
     TELE_SHUTTER_STATUS,
     STATE_TELEMETRY_MAX_GPIO_NUM,
     UNKNOWN_MODULE_IDS,
+    build_shutter_control_payload,
     can_v2_config_request_id,
     can_v2_control_command_id,
     can_v2_frame_class,
@@ -452,9 +454,7 @@ class ConfiguratorEngine:
             if item.get("module_id") == mid and item.get("has_master_key") is None:
                 self._sync_module_master_key_state(mid)
                 break
-        target = max(0, min(100, int(param)))
-        param_byte = target if cmd == 4 else 0
-        payload = [mid, sid, cmd, param_byte, 0, 0, 0, 0]
+        payload = build_shutter_control_payload(sid, cmd, param)
         self._io_acquire()
         try:
             self._refresh_secure_transport()

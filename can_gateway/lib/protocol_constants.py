@@ -547,6 +547,29 @@ OTA_BATCH_FRAMES = 64
 
 MAX_SHUTTERS = 28
 
+V2_CTRL_SHUTTER_CMD = 1
+SHUTTER_CMD_OPEN = 1
+SHUTTER_CMD_CLOSE = 2
+SHUTTER_CMD_STOP = 3
+SHUTTER_CMD_SET_POSITION = 4
+
+
+def build_shutter_control_payload(shutter_no: int, command: int, param: int = 0) -> list[int]:
+    """V3 CONTROL_COMMAND payload: [subtype, shutter_no, command, param, 0, 0, 0, 0]."""
+    target = max(0, min(100, int(param)))
+    param_byte = target if int(command) == SHUTTER_CMD_SET_POSITION else 0
+    return [
+        V2_CTRL_SHUTTER_CMD,
+        int(shutter_no),
+        int(command),
+        param_byte,
+        0,
+        0,
+        0,
+        0,
+    ]
+
+
 # Najwyzszy fizyczny numer GPIO (ESP32-S3 = 48). W V3 wszystkie podramki telemetryczne
 # dziela klase STATE_TELEMETRY; do odroznienia RELAY_GPIO_MAP od DEVICE_INFO sprawdzamy,
 # czy bajty 2..7 to numery GPIO (<=48) lub 0xFF; realny MAC ma zwykle bajt > 48.

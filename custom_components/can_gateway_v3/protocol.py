@@ -98,6 +98,21 @@ SHUTTER_CMD_STOP = 3
 SHUTTER_CMD_SET_POSITION = 4
 
 
+def build_shutter_control_payload(shutter_no: int, command: int, param: int = 0) -> list[int]:
+    target = max(0, min(100, int(param)))
+    param_byte = target if int(command) == SHUTTER_CMD_SET_POSITION else 0
+    return [
+        V2_CTRL_SHUTTER_CMD,
+        int(shutter_no),
+        int(command),
+        param_byte,
+        0,
+        0,
+        0,
+        0,
+    ]
+
+
 def can_v2_frame_id(frame_class: int, module_id: int) -> int:
     return ((int(module_id) & 0xFF) << 3) | (int(frame_class) & 0x07)
 
