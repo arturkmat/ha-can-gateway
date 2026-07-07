@@ -1,5 +1,16 @@
 # Changelog — ha-can-gateway
 
+## 2026-07-07 (add-on v0.7.0 + integration v3.5.0)
+
+### fix: unified add-on ↔ integration architecture (catalog is source of truth)
+
+- **Add-on entity catalog:** po skanie + deep read zapis `/data/entities.json` (razem z `modules.json`, wspólny `discovery_version`).
+- **`entity_export.py`:** tylko encje przypisane w FW (GPIO roles, mapy relay/shutter, sensory) — bez hipotetycznych slotów z samych liczników GET_SUMMARY.
+- **REST API:** `GET /api/entities` (katalog + live values), `GET /api/discovery` (moduły + encje + `discovery_version`), `POST /api/scan` zwraca `entity_count`.
+- **`can_gateway_v3` (add-on mode):** polling `/api/discovery` + `/api/entities` zamiast `/api/state`; przeładowanie platform HA przy zmianie `discovery_version`; brak duplikacji tworzenia encji w `addon_sync`.
+- **Panel Ingress:** kolumna liczby encji per moduł, status katalogu z `/api/discovery`.
+- **Testy:** rozszerzone `test_module_store`, `test_entity_export`, `test_can_gateway_v3_addon_sync`.
+
 ## 2026-07-05 (v0.6.2)
 
 ### fix: V3 plain CAN — TX nie blokowany, skan/auto_scan bez master_key, Ingress UI
@@ -9,7 +20,7 @@
 - **`options.py`:** poprawne parsowanie bool (`"false"` nie jest już traktowane jako true).
 - **`bus_manager`:** deep refresh po skanie także w trybie plain CAN; `master_key_required_hint` null gdy `secure_can=false`.
 - **Ingress UI:** `_resolve_static_dir()` + weryfikacja `static/` w Dockerfile; banner MASTER_KEY ukryty przy plain CAN.
-- **Testy:** `tests/test_can_send_plaintext.py`, encje z samego summary w `test_entity_export` / `test_can_gateway_v3_addon_sync`.
+- **Testy:** `tests/test_can_send_plaintext.py`.
 
 ## 2026-07-05 (v0.6.1)
 

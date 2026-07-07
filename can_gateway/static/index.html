@@ -1,46 +1,47 @@
-<!DOCTYPE html>
-<html lang="pl">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CAN Gateway — Skan magistrali</title>
-  <link rel="stylesheet" href="/static/styles.css" />
-</head>
-<body>
-  <h1>CAN Gateway</h1>
-  <p class="sub">Skan modułów na magistrali CAN. Encje Home Assistant tworzy integracja <code>can_gateway_v3</code> automatycznie po zapisie wyników.</p>
-
-  <div id="key-banner" class="key-banner" hidden></div>
-
-  <div class="card">
-    <h2>Status magistrali</h2>
-    <table><tbody id="conn-status"></tbody></table>
-  </div>
-
-  <div class="card toolbar">
-    <button id="btn-scan" type="button">Skanuj magistralę</button>
-    <button id="btn-refresh" type="button" class="secondary">Odśwież listę</button>
-    <span id="scan-status" class="hint"></span>
-  </div>
-
-  <div class="card">
-    <h2>Wykryte moduły</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Typ (HW)</th>
-          <th>Nazwa</th>
-          <th>MAC</th>
-          <th>Ostatni skan</th>
-        </tr>
-      </thead>
-      <tbody id="modules-body"></tbody>
-    </table>
-    <p id="modules-empty" class="hint">Brak modułów — uruchom skan magistrali.</p>
-  </div>
-
-  <footer class="footer-bar"><span id="footer-status">Ładowanie…</span></footer>
-  <script src="/static/app.js"></script>
-</body>
-</html>
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CAN Gateway — Skan magistrali</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <h1>CAN Gateway</h1>
+  <p class="sub">Skan modułów na magistrali CAN. Katalog encji zapisuje dodatek w <code>/data/entities.json</code>; integracja <code>can_gateway_v3</code> tworzy encje HA wyłącznie z tego katalogu.</p>
+
+  <div id="key-banner" class="key-banner" hidden></div>
+
+  <div class="card">
+    <h2>Status magistrali</h2>
+    <table><tbody id="conn-status"></tbody></table>
+  </div>
+
+  <div class="card toolbar">
+    <button id="btn-scan" type="button">Skanuj magistralę</button>
+    <button id="btn-refresh" type="button" class="secondary">Odśwież listę</button>
+    <span id="scan-status" class="hint"></span>
+  </div>
+
+  <div class="card">
+    <h2>Wykryte moduły</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Typ (HW)</th>
+          <th>Nazwa</th>
+          <th>MAC</th>
+          <th>Encje</th>
+          <th>Ostatni skan</th>
+        </tr>
+      </thead>
+      <tbody id="modules-body"></tbody>
+    </table>
+    <p id="modules-empty" class="hint">Brak modułów — uruchom skan magistrali.</p>
+  </div>
+
+  <footer class="footer-bar"><span id="footer-status">Ładowanie…</span></footer>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,8 +1,9 @@
 """Build Home Assistant entity snapshots from CAN Gateway module state.
 
-The add-on is the source of truth: integration can_gateway_v2 consumes
-``entities`` from ``/api/state`` or ``/api/entities`` without re-deriving
-relay/shutter/sensor logic from raw CAN.
+The add-on is the source of truth: integration ``can_gateway_v3`` (add-on mode)
+consumes the persisted catalog from ``GET /api/entities`` — only entities
+assigned in firmware (GPIO roles, relay/shutter maps, sensor scan), never
+hypothetical slots from summary counts alone.
 """
 
 from __future__ import annotations
@@ -53,6 +54,21 @@ def _shutter_map(raw: Any) -> dict[int, tuple[int, int]]:
                 out[sid] = (int(pair[0]), int(pair[1]))
         except (TypeError, ValueError):
             pass
+    return out
+
+
+def _gpio_roles(raw: Any) -> dict[int, dict[str, Any]]:
+    out: dict[int, dict[str, Any]] = {}
+    if not isinstance(raw, dict):
+        return out
+    for gpio_key, info in raw.items():
+        if not isinstance(info, dict):
+            continue
+        try:
+            gpio = int(info.get("gpio", gpio_key))
+        except (TypeError, ValueError):
+            continue
+        out[gpio] = info
     return out
 
 
@@ -316,9 +332,8 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
     shutter_map = _shutter_map(rt.get("shutter_map"))
     mcp_pins = _mcp_pins(rt.get("mcp_relay_pins"))
     hw_flags = int(rt.get("hw_flags", mod.get("hw_flags") or 0))
-    button_count = mod.get("button_count")
-    relay_count = mod.get("relay_count")
-    shutter_count = mod.get("shutter_count")
+    gpio_roles = _gpio_roles(rt.get("gpio_roles"))
+    led_strips = rt.get("led_strips") if isinstance(rt.get("led_strips"), dict) else {}
 
     shutter_reserved: set[int] = set()
     for ro, rc in shutter_map.values():
@@ -334,11 +349,12 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
             if isinstance(row, dict) and row.get("relay_no") is not None:
                 relay_states[normalize_relay_no(int(row["relay_no"]))] = bool(row.get("on"))
 
+    relay_role = PIN_ROLE_MAP.get("Relay")
     relay_nos: set[int] = set(relay_gpio_map.keys())
-    for _gpio, info in (rt.get("gpio_roles") or {}).items():
-        if not isinstance(info, dict):
-            continue
-        if info.get("role_name") == "Relay" or info.get("role") == PIN_ROLE_MAP.get("Relay"):
+    for info in gpio_roles.values():
+        role_code = info.get("role")
+        role_name = str(info.get("role_name") or "")
+        if role_name == "Relay" or role_code == relay_role:
             idx = int(info.get("index", 0))
             if idx > 0:
                 relay_nos.add(idx)
@@ -349,11 +365,6 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
     for chip_off, pins in mcp_pins.items():
         for local_pin in pins:
             relay_nos.add(MCP23017_RELAY_CAN_BASE + int(chip_off) * 16 + int(local_pin))
-    if not relay_nos and isinstance(relay_count, int) and relay_count > 0:
-        hc595_count = hc595_register_count(hw_flags) * SHIFT595_RELAY_COUNT_PER_REGISTER
-        mcp_count = sum(len(p) for p in mcp_pins.values())
-        local_slots = max(0, relay_count - hc595_count - mcp_count)
-        relay_nos.update(range(1, min(MAX_LOCAL_RELAYS, local_slots) + 1))
 
     for relay_no in sorted(relay_nos):
         if relay_no in shutter_reserved:
@@ -439,43 +450,105 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
             )
         )
 
-    if not shutter_map and isinstance(shutter_count, int) and shutter_count > 0:
-        for shutter_no in range(1, min(28, shutter_count) + 1):
-            uid = f"m{module_id}_shutter{shutter_no}"
-            entities.append(
-                _entity(
-                    platform="cover",
-                    unique_id=uid,
-                    name=f"CAN M{module_id} Shutter {shutter_no}",
-                    module_id=module_id,
-                    value={"position": None, "direction": 0, "direction_text": "stopped"},
-                    attributes={
-                        "module_id": module_id,
-                        "shutter_no": shutter_no,
-                        "relay_open_no": None,
-                        "relay_close_no": None,
-                        "gpio_open_no": None,
-                        "gpio_close_no": None,
-                        "gpio_no": None,
-                    },
-                    device_class="shutter",
-                )
+    button_role = PIN_ROLE_MAP.get("Button")
+    button_nos: set[int] = set()
+    for gpio, info in gpio_roles.items():
+        role_code = info.get("role")
+        role_name = str(info.get("role_name") or "")
+        if role_name != "Button" and role_code != button_role:
+            continue
+        button_no = int(info.get("index", 0))
+        if button_no <= 0:
+            continue
+        button_nos.add(button_no)
+        uid = f"m{module_id}_btn{button_no}_action"
+        entities.append(
+            _entity(
+                platform="sensor",
+                unique_id=uid,
+                name=f"CAN M{module_id} Button {button_no} Action",
+                module_id=module_id,
+                value=None,
+                attributes={
+                    "module_id": module_id,
+                    "button_no": button_no,
+                    "action_code": None,
+                    "gpio_no": gpio,
+                },
+                icon="mdi:gesture-tap-button",
             )
+        )
 
-    if isinstance(button_count, int) and button_count > 0:
-        for button_no in range(1, min(64, button_count) + 1):
-            uid = f"m{module_id}_btn{button_no}_action"
-            entities.append(
-                _entity(
-                    platform="sensor",
-                    unique_id=uid,
-                    name=f"CAN M{module_id} Button {button_no} Action",
-                    module_id=module_id,
-                    value=None,
-                    attributes={"module_id": module_id, "button_no": button_no, "action_code": None, "gpio_no": None},
-                    icon="mdi:gesture-tap-button",
-                )
+    ws2812_role = PIN_ROLE_MAP.get("WS2812")
+    strip_indices: set[int] = set()
+    for gpio, info in gpio_roles.items():
+        role_code = info.get("role")
+        role_name = str(info.get("role_name") or "")
+        if role_name != "WS2812" and role_code != ws2812_role:
+            continue
+        strip_index = int(info.get("index", 0))
+        if strip_index <= 0 or strip_index in strip_indices:
+            continue
+        strip_indices.add(strip_index)
+        strip_cfg = led_strips.get(str(strip_index)) or led_strips.get(strip_index) or {}
+        strip_type = int(strip_cfg.get("strip_type", 0)) if isinstance(strip_cfg, dict) else 0
+        type_label = "CCT" if strip_type == 2 else "RGB"
+        uid = f"m{module_id}_led_strip{strip_index}"
+        entities.append(
+            _entity(
+                platform="light",
+                unique_id=uid,
+                name=f"CAN M{module_id} LED Strip {strip_index} ({type_label})",
+                module_id=module_id,
+                value={
+                    "is_on": bool(strip_cfg.get("is_on")) if isinstance(strip_cfg, dict) else False,
+                    "brightness": int(strip_cfg.get("brightness", 128)) if isinstance(strip_cfg, dict) else 128,
+                },
+                attributes={
+                    "module_id": module_id,
+                    "strip_index": strip_index,
+                    "gpio": gpio,
+                    "strip_type": strip_type,
+                },
+                icon="mdi:led-strip-variant",
             )
+        )
+    for strip_key, strip_cfg in led_strips.items():
+        if not isinstance(strip_cfg, dict):
+            continue
+        try:
+            strip_index = int(strip_key)
+        except (TypeError, ValueError):
+            continue
+        if strip_index in strip_indices:
+            continue
+        gpio = int(strip_cfg.get("gpio", 0))
+        if gpio <= 0:
+            continue
+        strip_indices.add(strip_index)
+        strip_type = int(strip_cfg.get("strip_type", 0))
+        type_label = "CCT" if strip_type == 2 else "RGB"
+        uid = f"m{module_id}_led_strip{strip_index}"
+        entities.append(
+            _entity(
+                platform="light",
+                unique_id=uid,
+                name=f"CAN M{module_id} LED Strip {strip_index} ({type_label})",
+                module_id=module_id,
+                value={
+                    "is_on": bool(strip_cfg.get("is_on", False)),
+                    "brightness": int(strip_cfg.get("brightness", 128)),
+                },
+                attributes={
+                    "module_id": module_id,
+                    "strip_index": strip_index,
+                    "gpio": gpio,
+                    "strip_type": strip_type,
+                    "pixel_count": strip_cfg.get("count"),
+                },
+                icon="mdi:led-strip-variant",
+            )
+        )
 
     gpio_values = rt.get("gpio_values") or {}
     for gpio_key, info in gpio_values.items():

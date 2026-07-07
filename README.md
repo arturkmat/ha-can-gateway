@@ -1,72 +1,121 @@
-# CAN Gateway — Home Assistant (add-on + integracja)
-
-Jedno repozytorium dla całego stacku Home Assistant CAN Gateway:
-
-| Ścieżka | Opis |
-|---------|------|
-| `can_gateway/` | Dodatek Supervisor **v0.6.1** (USB-CAN, panel skanu, REST API) |
-| `can_gateway/integration/can_gateway_v3/` | Integracja bundlowana w dodatku (auto-deploy przy starcie) |
-| `custom_components/can_gateway_v3/` | Ta sama integracja w korzeniu — **HACS** i ręczna instalacja |
-| `hacs.json` | Manifest HACS (integracja z tego repo) |
-| `repository.yaml` | Manifest sklepu dodatków Supervisor |
-
-Firmware, konfigurator Windows i dokumentacja protokołu CAN: [can-control-suite](https://github.com/arturkmat/can-control-suite).
-
-## Instalacja (Home Assistant OS / Supervised) — zalecane
-
-1. **Ustawienia → Dodatki → Sklep dodatków → ⋮ → Repozytoria**
-2. Dodaj URL (musi być pełny adres GitHub, **nie** ścieżka katalogu):
-   `https://github.com/arturkmat/ha-can-gateway`
-3. Odśwież sklep dodatków, zainstaluj **CAN Gateway**, ustaw `can_port` i `can_bitrate` (**125000**), uruchom dodatek.
-4. Dla firmware **V3 nie ustawiaj** `master_key_hex` — domyślnie `secure_can: false` (plain CAN). Opcja `secure_can: true` + klucz tylko dla legacy modułów ze szyfrowaniem.
-5. **Gotowe** — dodatek kopiuje `can_gateway_v3` do `/config/custom_components/`, przeładowuje custom components i wysyła discovery Supervisor; HA tworzy wpis integracji automatycznie (`connection_mode=addon`).
-
-Panel: **Ustawienia → Dodatki → CAN Gateway → Otwórz panel web** — tylko **Skanuj magistralę** i lista modułów. Encje w HA pojawiają się automatycznie (integracja nasłuchuje `/api/discovery`).
-
-### Legacy Secure CAN (opcjonalnie)
-
-Tylko moduły ze starym firmware wymagającym szyfrowania:
-
-1. W ustawieniach dodatku ustaw **`secure_can: true`** oraz **`master_key_hex`** (64 znaki hex).
-2. Otwórz panel dodatku → **Skanuj magistralę**.
-3. Sprawdź **Ustawienia → Urządzenia i usługi → CAN Gateway v3** — encje powinny pojawić się w ciągu ~10 s.
-
-## Instalacja integracji (HACS / direct serial)
-
-Bez Supervisor lub gdy chcesz tylko integrację (port SLCAN w HA Core):
-
-1. **HACS → Integracje → ⋮ → Własne repozytoria**
-2. URL: `https://github.com/arturkmat/ha-can-gateway`, kategoria: **Integracja**
-3. Pobierz **CAN Gateway v3**, zrestartuj HA.
-4. **Ustawienia → Urządzenia i usługi → Dodaj integrację → CAN Gateway v3** — tryb **direct serial** lub **add-on** (jeśli dodatek działa na innym hoście).
-
-Ręcznie: skopiuj `custom_components/can_gateway_v3` → `<config>/custom_components/`.
-
-## API dodatku (skrót)
-
-| Metoda | Endpoint | Opis |
-|--------|----------|------|
-| GET | `/api/health` | Health check |
-| GET | `/api/discovery` | Zapisane moduły + `discovery_version` (poll integracji) |
-| GET | `/api/modules` | Pełna lista modułów |
-| POST | `/api/scan` | Skan magistrali + zapis do `/data` |
-| GET | `/api/state` | Snapshot dla integracji v3 |
-| POST | `/api/can/send` | TX CAN (usługi v3 w trybie add-on) |
-
-Szczegóły encji, usług i migracji v2→v3: [can-control-suite/home_assistant/README.md](https://github.com/arturkmat/can-control-suite/blob/main/home_assistant/README.md) (dokumentacja protokołu i legacy v2).
-
-## Sync integracji (dla deweloperów)
-
-Po edycji `custom_components/can_gateway_v3/`:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\tools\sync_addon_integration.ps1
-```
-
-Kopiuje pliki do `can_gateway/integration/can_gateway_v3/` przed commitem / publikacją dodatku.
-
-## Testy
-
-```powershell
-python -m pytest tests/
-```
+# CAN Gateway — Home Assistant (add-on + integracja)
+
+Jedno repozytorium dla całego stacku Home Assistant CAN Gateway:
+
+| Ścieżka | Opis |
+|---------|------|
+| `can_gateway/` | Dodatek Supervisor **v0.7.0** (USB-CAN, panel skanu, REST API, katalog encji) |
+| `can_gateway/integration/can_gateway_v3/` | Integracja bundlowana w dodatku (auto-deploy przy starcie) |
+| `custom_components/can_gateway_v3/` | Ta sama integracja w korzeniu — **HACS** i ręczna instalacja |
+| `hacs.json` | Manifest HACS (integracja z tego repo) |
+| `repository.yaml` | Manifest sklepu dodatków Supervisor |
+
+Firmware, konfigurator Windows i dokumentacja protokołu CAN: [can-control-suite](https://github.com/arturkmat/can-control-suite).
+
+## Architektura (add-on + integracja)
+
+```mermaid
+flowchart LR
+  subgraph Addon["Dodatek can_gateway"]
+    USB["USB / SLCAN"]
+    SCAN["Skan + deep read CAN"]
+    EXPORT["entity_export.py"]
+    DATA["/data/modules.json\n/data/entities.json"]
+    API["REST API"]
+    USB --> SCAN --> EXPORT --> DATA --> API
+  end
+
+  subgraph HA["Home Assistant Core"]
+    INT["can_gateway_v3\n(connection_mode=addon)"]
+    ENT["Encje HA\nswitch, cover, light…"]
+    INT --> ENT
+  end
+
+  API -->|"GET /api/discovery\nGET /api/entities"| INT
+  INT -.->|"POST /api/can/send\n(usługi HA)"| API
+```
+
+| Rola | Dodatek | Integracja (add-on mode) |
+|------|---------|---------------------------|
+| Dostęp do USB/CAN | **Tak** | **Nie** |
+| Skan magistrali | **Tak** | **Nie** |
+| Katalog encji | **Tak** (`/data/entities.json`) | Czyta z API |
+| Tworzenie encji HA | **Nie** | **Tak** (wyłącznie z katalogu) |
+| Live state (relay, cover…) | Zapisuje w katalogu + `/api/entities` | Poll co 5 s |
+
+## Instalacja (Home Assistant OS / Supervised) — zalecane
+
+1. **Ustawienia → Dodatki → Sklep dodatków → ⋮ → Repozytoria**
+2. Dodaj URL: `https://github.com/arturkmat/ha-can-gateway`
+3. Odśwież sklep dodatków, zainstaluj **CAN Gateway**, ustaw `can_port` i `can_bitrate` (**125000**), uruchom dodatek.
+4. Dla firmware **V3** domyślnie `secure_can: false` (plain CAN). Opcja `secure_can: true` + klucz tylko dla legacy modułów ze szyfrowaniem.
+5. **Gotowe** — dodatek kopiuje `can_gateway_v3` do `/config/custom_components/`, przeładowuje custom components i wysyła discovery Supervisor; HA tworzy wpis integracji automatycznie (`connection_mode=addon`).
+
+Panel: **Ustawienia → Dodatki → CAN Gateway → Otwórz panel web** — **Skanuj magistralę**, lista modułów z liczbą encji. Encje w HA pojawiają się automatycznie po zapisie katalogu (integracja nasłuchuje `discovery_version`).
+
+### Workflow użytkownika
+
+1. Uruchom dodatek CAN Gateway (adapter USB przypisany do kontenera dodatku).
+2. Otwórz panel Ingress → **Skanuj magistralę** (deep read GPIO, relay, shutter, sensory).
+3. Dodatek zapisuje `modules.json` + `entities.json` i inkrementuje `discovery_version`.
+4. Integracja `can_gateway_v3` wykrywa zmianę wersji → przeładowuje platformy → tworzy/aktualizuje encje wyłącznie z katalogu.
+5. Sterowanie w HA (przełączniki, rolety, LED) idzie przez usługi integracji → REST dodatku → magistrala CAN.
+
+## Instalacja integracji (HACS / direct serial)
+
+Bez Supervisor lub gdy chcesz tylko integrację (port SLCAN w HA Core):
+
+1. **HACS → Integracje → ⋮ → Własne repozytoria** → URL: `https://github.com/arturkmat/ha-can-gateway`
+2. Pobierz **CAN Gateway v3**, zrestartuj HA.
+3. **Dodaj integrację → CAN Gateway v3** — tryb **direct serial** (integracja otwiera port) lub **add-on** (jeśli dodatek działa).
+
+## API dodatku (skrót)
+
+| Metoda | Endpoint | Opis |
+|--------|----------|------|
+| GET | `/api/health` | Health check |
+| GET | `/api/discovery` | Moduły + katalog encji + `discovery_version` |
+| GET | `/api/entities` | Pełny katalog encji (integracja HA) + live values |
+| GET | `/api/modules` | Pełna lista modułów |
+| POST | `/api/scan` | Skan magistrali + zapis katalogu; zwraca `entity_count` |
+| GET | `/api/state` | Legacy snapshot (moduły + encje); preferuj `/api/entities` |
+| POST | `/api/can/send` | TX CAN (usługi v3 w trybie add-on) |
+
+### Kontrakt `GET /api/entities`
+
+```json
+{
+  "ok": true,
+  "discovery_version": 3,
+  "entity_count": 12,
+  "updated_at": 1750000000.0,
+  "last_scan_at": 1750000000.0,
+  "entities": [
+    {
+      "platform": "switch",
+      "unique_id": "m201_local_relay1",
+      "name": "CAN M201 Relay 1",
+      "module_id": 201,
+      "value": false,
+      "attributes": { "module_id": 201, "relay_no": 1, "source": "local" }
+    }
+  ],
+  "status": { "bus_ok": true, "version": "0.7.0" }
+}
+```
+
+Pola encji: `platform`, `unique_id`, `name`, `module_id`, opcjonalnie `value`, `attributes`, `device_class`, `unit`, `icon`.
+
+## Sync integracji (dla deweloperów)
+
+Po edycji `custom_components/can_gateway_v3/`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\sync_addon_integration.ps1
+```
+
+## Testy
+
+```powershell
+python -m pytest tests/ -q
+```

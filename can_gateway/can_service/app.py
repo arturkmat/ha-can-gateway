@@ -62,14 +62,7 @@ def create_app(bus: BusManager) -> web.Application:
         return web.json_response(bus.full_state())
 
     async def api_entities(_request: web.Request) -> web.Response:
-        snapshot = bus.full_state()
-        return web.json_response(
-            {
-                "entities": snapshot.get("entities") or [],
-                "module_count": len(snapshot.get("modules") or []),
-                "status": snapshot.get("status"),
-            }
-        )
+        return web.json_response(bus.entities_catalog(live_values=True))
 
     async def api_modules(_request: web.Request) -> web.Response:
         return web.json_response(

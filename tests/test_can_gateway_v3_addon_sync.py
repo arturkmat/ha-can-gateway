@@ -104,7 +104,8 @@ def test_seed_coordinator_from_addon_modules():
     info = coordinator.get_module_info(5)
     assert info.name == "Kuchnia"
     assert info.relay_gpio_map[1] == 7
-    assert "m5_online" in coordinator.entity_descriptions
+    assert "m5_online" not in coordinator.entity_descriptions
+    assert "m5_local_relay1" not in coordinator.entity_descriptions
     assert const.DOMAIN == "can_gateway_v3"
 
 

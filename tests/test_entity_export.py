@@ -57,6 +57,10 @@ def _sample_module() -> dict:
             "gpio_values": {
                 "7": {"gpio": 7, "logical": 1, "raw": 1, "role": 4, "role_name": "BinarySensor", "valid": True},
             },
+            "gpio_roles": {
+                "3": {"gpio": 3, "role": 1, "role_name": "Button", "index": 1},
+                "4": {"gpio": 4, "role": 1, "role_name": "Button", "index": 2},
+            },
         },
         "control_relays": [
             {"relay_no": 3, "on": False, "pulse_ms": 250, "source": "local", "shutter_reserved": False},
@@ -108,8 +112,25 @@ def test_build_entities_from_summary_counts_only():
     }
     entities = build_entities_for_module(mod)
     uids = {e["unique_id"] for e in entities}
-    assert "m7_online" in uids
-    assert "m7_local_relay1" in uids
-    assert "m7_local_relay2" in uids
-    assert "m7_shutter1" in uids
-    assert "m7_btn1_action" in uids
+    assert uids == {"m7_online"}
+
+
+def test_build_entities_from_gpio_roles_only():
+    mod = {
+        "module_id": 9,
+        "runtime": {
+            "gpio_roles": {
+                "4": {"gpio": 4, "role": 1, "role_name": "Button", "index": 1},
+                "5": {"gpio": 5, "role": 2, "role_name": "Relay", "index": 1},
+                "6": {"gpio": 6, "role": 12, "role_name": "WS2812", "index": 1},
+            },
+            "relay_gpio_map": {"1": 5},
+            "relays": [{"relay_no": 1, "on": False, "source": "local"}],
+        },
+    }
+    entities = build_entities_for_module(mod)
+    uids = {e["unique_id"] for e in entities}
+    assert "m9_btn1_action" in uids
+    assert "m9_local_relay1" in uids
+    assert "m9_led_strip1" in uids
+    assert "m9_local_relay2" not in uids

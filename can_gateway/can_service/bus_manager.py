@@ -31,7 +31,7 @@ from protocol_constants import (
 from .can_send import prepare_outgoing_frames
 from .configurator_bridge import create_engine
 from .deep_config import refresh_module_deep as _refresh_module_deep_impl
-from .module_store import discovery_snapshot, load_modules, save_modules
+from .module_store import discovery_snapshot, load_entities, load_modules, save_discovery
 from .module_state import (
     ModuleRuntimeState,
     RelayState,
@@ -259,39 +259,11 @@ class BusManager:
                 "module_count": len(self._modules),
                 "last_scan_status": self._last_scan_status,
                 "last_scan_at": self._last_scan_at,
-                "version": "0.6.2",
+                "version": "0.7.0",
                 "mqtt_enabled": self._options.mqtt_enabled,
             }
 
-    def full_state(self) -> dict[str, Any]:
-        if self.bus_ok:
-            self._ensure_transport_macs()
-            self.collect_relay_state_frames(0.15)
-        engine = self._get_engine()
-        modules = [engine.export_module_dict(rec["module_id"]) for rec in engine.list_modules()]
-        if not modules:
-            modules = self.list_modules(include_runtime=True)
-        if not modules:
-            with self._lock:
-                for rec in sorted(self._modules.values(), key=lambda r: r.module_id):
-                    modules.append(rec.to_dict(include_runtime=True))
-        from entity_export import build_entities_snapshot
-
-        entities = build_entities_snapshot(modules)
-        return {"status": self.status(), "modules": modules, "entities": entities}
-
-    def _load_persisted_modules(self) -> None:
-        for mod in load_modules():
-            mid = mod.get("module_id")
-            if isinstance(mid, int) and 1 <= mid <= 254:
-                self._persisted_modules[int(mid)] = mod
-        if self._persisted_modules:
-            _LOGGER.info(
-                "Loaded %d persisted module(s) from disk",
-                len(self._persisted_modules),
-            )
-
-    def persist_discovery_state(self, *, last_scan_at: float | None = None) -> None:
+    def _export_modules_for_catalog(self) -> list[dict[str, Any]]:
         modules: list[dict[str, Any]] = []
         engine = self._get_engine()
         for rec in engine.list_modules():
@@ -305,22 +277,118 @@ class BusManager:
                     modules.append(rec.to_dict(include_runtime=True))
         if not modules and self._persisted_modules:
             modules = list(self._persisted_modules.values())
+        return modules
+
+    def _build_entity_catalog(self, modules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        from entity_export import build_entities_snapshot
+
+        return build_entities_snapshot(modules)
+
+    def _merge_live_entity_values(
+        self, catalog: list[dict[str, Any]], live: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        live_by_uid = {
+            str(row.get("unique_id")): row for row in live if isinstance(row, dict) and row.get("unique_id")
+        }
+        merged: list[dict[str, Any]] = []
+        for row in catalog:
+            if not isinstance(row, dict):
+                continue
+            out = dict(row)
+            uid = str(out.get("unique_id") or "")
+            live_row = live_by_uid.get(uid)
+            if live_row is not None:
+                if "value" in live_row:
+                    out["value"] = live_row.get("value")
+                live_attrs = live_row.get("attributes")
+                if isinstance(live_attrs, dict):
+                    base_attrs = out.get("attributes")
+                    if isinstance(base_attrs, dict):
+                        out["attributes"] = {**base_attrs, **live_attrs}
+                    else:
+                        out["attributes"] = dict(live_attrs)
+            merged.append(out)
+        return merged
+
+    def full_state(self) -> dict[str, Any]:
+        if self.bus_ok:
+            self._ensure_transport_macs()
+            self.collect_relay_state_frames(0.15)
+        modules = self._export_modules_for_catalog()
+        live_entities = self._build_entity_catalog(modules) if modules else []
+        catalog = load_entities()
+        if catalog:
+            entities = self._merge_live_entity_values(catalog, live_entities)
+        else:
+            entities = live_entities
+        return {"status": self.status(), "modules": modules, "entities": entities}
+
+    def entities_catalog(self, *, live_values: bool = True) -> dict[str, Any]:
+        store = discovery_snapshot(scan_status=self._last_scan_status)
+        catalog = list(store.get("entities") or [])
+        if live_values and self.bus_ok and catalog:
+            modules = self._export_modules_for_catalog()
+            if modules:
+                live_entities = self._build_entity_catalog(modules)
+                catalog = self._merge_live_entity_values(catalog, live_entities)
+        elif live_values and self.bus_ok and not catalog:
+            modules = self._export_modules_for_catalog()
+            catalog = self._build_entity_catalog(modules) if modules else []
+        return {
+            "ok": True,
+            "discovery_version": int(store.get("discovery_version") or 0),
+            "entity_count": len(catalog),
+            "entities": catalog,
+            "updated_at": store.get("updated_at"),
+            "last_scan_at": store.get("last_scan_at"),
+            "status": self.status(),
+        }
+
+    def _load_persisted_modules(self) -> None:
+        for mod in load_modules():
+            mid = mod.get("module_id")
+            if isinstance(mid, int) and 1 <= mid <= 254:
+                self._persisted_modules[int(mid)] = mod
+        if self._persisted_modules:
+            _LOGGER.info(
+                "Loaded %d persisted module(s) from disk",
+                len(self._persisted_modules),
+            )
+
+    def persist_discovery_state(self, *, last_scan_at: float | None = None) -> None:
+        modules = self._export_modules_for_catalog()
         if not modules:
             return
-        save_modules(modules, last_scan_at=last_scan_at)
+        entities = self._build_entity_catalog(modules)
+        discovery_version = save_discovery(modules, entities, last_scan_at=last_scan_at)
         with self._lock:
             for mod in modules:
                 mid = mod.get("module_id")
                 if isinstance(mid, int):
                     self._persisted_modules[int(mid)] = mod
-        _LOGGER.info("Persisted %d module snapshot(s) to /data", len(modules))
+        _LOGGER.info(
+            "Persisted %d module(s), %d entity(ies), discovery_version=%s to /data",
+            len(modules),
+            len(entities),
+            discovery_version,
+        )
 
     def discovery_payload(self) -> dict[str, Any]:
-        modules = self.list_modules(include_runtime=True)
         store = discovery_snapshot(scan_status=self._last_scan_status)
-        if modules:
-            store["modules"] = modules
-            store["module_count"] = len(modules)
+        live_modules = self.list_modules(include_runtime=True)
+        if live_modules:
+            from module_store import entity_counts_by_module
+
+            live_entities = self._build_entity_catalog(live_modules)
+            counts = entity_counts_by_module(live_entities)
+            store["modules"] = [
+                {**mod, "entity_count": counts.get(int(mod["module_id"]), 0)}
+                if isinstance(mod.get("module_id"), int)
+                else mod
+                for mod in live_modules
+            ]
+            store["module_count"] = len(live_modules)
+            store["entity_count"] = len(live_entities)
         return store
 
     def list_modules(self, *, include_runtime: bool = False) -> list[dict[str, Any]]:
@@ -1130,4 +1198,5 @@ class BusManager:
         result["modules"] = modules
         store = discovery_snapshot(scan_status=self._last_scan_status)
         result["discovery_version"] = store.get("discovery_version")
+        result["entity_count"] = store.get("entity_count", 0)
         return result
