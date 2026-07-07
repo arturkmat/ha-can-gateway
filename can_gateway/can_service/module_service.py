@@ -9,6 +9,8 @@ from protocol_constants import (
     COMMAND_IDENTIFY,
     COMMAND_SET_MODULE_ID_BY_MAC,
     COMMAND_SET_MODULE_NAME,
+    MODULE_NAME_CHUNK_READ,
+    MODULE_NAME_MAX_LEN,
 )
 
 if TYPE_CHECKING:
@@ -22,11 +24,40 @@ def _ascii_payload(name: str) -> list[int]:
     return data[:6]
 
 
+def read_module_name_chunked(bus: BusManager, module_id: int, *, timeout: float = 0.6) -> str | None:
+    parts: list[str] = []
+    expected_total: int | None = None
+    for offset in range(0, MODULE_NAME_MAX_LEN, MODULE_NAME_CHUNK_READ):
+        resp = bus.send_config_and_wait(
+            int(module_id),
+            COMMAND_GET_MODULE_NAME,
+            [offset],
+            timeout=timeout,
+        )
+        if resp is None or len(resp) < 8 or int(resp[2]) != 0:
+            return None
+        total_len = int(resp[3])
+        resp_offset = int(resp[4])
+        if resp_offset != offset:
+            return None
+        if expected_total is None:
+            expected_total = total_len
+        elif expected_total != total_len:
+            return None
+        if total_len == 0:
+            return ""
+        chars = [value for value in resp[5:8] if value != 0]
+        parts.append(bytes(chars).decode("ascii", errors="ignore"))
+        if offset + MODULE_NAME_CHUNK_READ >= total_len:
+            break
+    limit = expected_total if expected_total is not None else MODULE_NAME_MAX_LEN
+    return "".join(parts)[:limit].strip()
+
+
 def get_module_name(bus: BusManager, module_id: int) -> dict[str, Any]:
-    resp = bus.send_config_and_wait(module_id, COMMAND_GET_MODULE_NAME, timeout=0.6)
-    if resp is None or len(resp) < 3 or int(resp[2]) != 0:
+    name = read_module_name_chunked(bus, module_id)
+    if name is None:
         return {"ok": False, "error": "read failed"}
-    name = bus._ascii_from_bytes(list(resp[3:]))  # noqa: SLF001
     return {"ok": True, "module_id": int(module_id), "name": name}
 
 

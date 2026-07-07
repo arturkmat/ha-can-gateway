@@ -305,6 +305,60 @@ def _sensor_entities_from_telemetry(module_id: int, sensors: list[Any]) -> list[
     return out
 
 
+def _is_relay_gpio_role(info: dict[str, Any], relay_role: int | None) -> bool:
+    role_code = info.get("role")
+    role_name = str(info.get("role_name") or "")
+    return role_name == "Relay" or role_code == relay_role
+
+
+def _assigned_relay_numbers(
+    *,
+    relay_gpio_map: dict[int, int],
+    gpio_roles: dict[int, dict[str, Any]],
+    relay_pulse_ms: dict[int, int],
+    mcp_pins: dict[int, set[int]],
+    hw_flags: int,
+    shutter_reserved: set[int],
+) -> set[int]:
+    """Relay indices assigned in firmware — never from summary counts or passive telemetry."""
+    relay_role = PIN_ROLE_MAP.get("Relay")
+    nums: set[int] = set()
+    has_roles = bool(gpio_roles)
+
+    for info in gpio_roles.values():
+        if not _is_relay_gpio_role(info, relay_role):
+            continue
+        idx = int(info.get("index", 0))
+        if idx > 0:
+            nums.add(idx)
+
+    for rn, gpio in relay_gpio_map.items():
+        rn_i = int(rn)
+        g = int(gpio)
+        if rn_i <= 0 or g == 255:
+            continue
+        if has_roles:
+            ginfo = gpio_roles.get(g)
+            if ginfo is None or not _is_relay_gpio_role(ginfo, relay_role):
+                continue
+        nums.add(rn_i)
+
+    for rn, pulse in relay_pulse_ms.items():
+        if int(pulse) > 0:
+            nums.add(int(rn))
+
+    regs = hc595_register_count(hw_flags)
+    if regs > 0 and has_roles:
+        nums.update(hc595_relay_numbers(hw_flags))
+
+    for chip_off, pins in mcp_pins.items():
+        for local_pin in pins:
+            nums.add(MCP23017_RELAY_CAN_BASE + int(chip_off) * 16 + int(local_pin))
+
+    nums.difference_update(shutter_reserved)
+    return nums
+
+
 def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
     """Return HA entity rows for one module export dict (from export_module_dict)."""
     module_id = mod.get("module_id")
@@ -343,28 +397,14 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
             shutter_reserved.add(rc)
 
     relay_states = _relay_state_map(rt.get("relays") or [])
-    control_relays = mod.get("control_relays")
-    if isinstance(control_relays, list):
-        for row in control_relays:
-            if isinstance(row, dict) and row.get("relay_no") is not None:
-                relay_states[normalize_relay_no(int(row["relay_no"]))] = bool(row.get("on"))
-
-    relay_role = PIN_ROLE_MAP.get("Relay")
-    relay_nos: set[int] = set(relay_gpio_map.keys())
-    for info in gpio_roles.values():
-        role_code = info.get("role")
-        role_name = str(info.get("role_name") or "")
-        if role_name == "Relay" or role_code == relay_role:
-            idx = int(info.get("index", 0))
-            if idx > 0:
-                relay_nos.add(idx)
-    relay_nos.update(relay_states.keys())
-    relay_nos.update(relay_pulse_ms.keys())
-    for relay_no in hc595_relay_numbers(hw_flags):
-        relay_nos.add(int(relay_no))
-    for chip_off, pins in mcp_pins.items():
-        for local_pin in pins:
-            relay_nos.add(MCP23017_RELAY_CAN_BASE + int(chip_off) * 16 + int(local_pin))
+    relay_nos = _assigned_relay_numbers(
+        relay_gpio_map=relay_gpio_map,
+        gpio_roles=gpio_roles,
+        relay_pulse_ms=relay_pulse_ms,
+        mcp_pins=mcp_pins,
+        hw_flags=hw_flags,
+        shutter_reserved=shutter_reserved,
+    )
 
     for relay_no in sorted(relay_nos):
         if relay_no in shutter_reserved:

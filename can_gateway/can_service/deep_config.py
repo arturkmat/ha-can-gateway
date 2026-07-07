@@ -8,8 +8,6 @@ from typing import TYPE_CHECKING, Any
 from protocol_constants import (
     COMMAND_GET_BUILD_INFO,
     COMMAND_GET_MCP23017_ROLE_DUMP,
-    COMMAND_GET_MODULE_NAME,
-    COMMAND_GET_RELAY_PULSE,
     COMMAND_GET_SHUTTER_RELAYS,
     COMMAND_GET_SUMMARY,
     COMMAND_SCAN_MCP23017,
@@ -31,11 +29,25 @@ def refresh_module_deep(bus: BusManager, module_id: int) -> dict[str, Any]:
     if not bus.bus_ok:
         return {"ok": False, "error": "bus not open"}
 
+    engine = bus._get_engine()  # noqa: SLF001
+    engine.set_current_module(mid)
+
     bus.send_config(mid, COMMAND_GET_SUMMARY)
     time.sleep(0.15)
-    for cmd in (COMMAND_GET_MODULE_NAME, COMMAND_GET_BUILD_INFO, COMMAND_SCAN_SENSORS, COMMAND_SCAN_MCP23017):
+
+    name = engine._read_module_name(mid)  # noqa: SLF001
+    if name is not None:
+        engine.context(mid).name = name
+        for item in engine.discovered_modules:
+            if item.get("module_id") == mid:
+                item["name"] = name
+                break
+
+    for cmd in (COMMAND_GET_BUILD_INFO, COMMAND_SCAN_SENSORS, COMMAND_SCAN_MCP23017):
         bus.send_config(mid, cmd)
         time.sleep(_CMD_GAP_S)
+
+    engine.read_gpio_roles_from_module()
 
     for chip in range(8):
         bus.send_config(mid, COMMAND_GET_MCP23017_ROLE_DUMP, [chip])

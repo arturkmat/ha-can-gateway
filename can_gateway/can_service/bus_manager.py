@@ -259,7 +259,7 @@ class BusManager:
                 "module_count": len(self._modules),
                 "last_scan_status": self._last_scan_status,
                 "last_scan_at": self._last_scan_at,
-                "version": "0.7.0",
+                "version": "0.7.2",
                 "mqtt_enabled": self._options.mqtt_enabled,
             }
 
@@ -482,10 +482,10 @@ class BusManager:
         for chip, pins in rec.runtime.mcp_relay_pins.items():
             for lp in pins:
                 nums.add(MCP23017_RELAY_CAN_BASE + int(chip) * 16 + int(lp))
-        nums.update(rec.runtime.relays.keys())
+        for rn, pulse in rec.runtime.relay_pulse_ms.items():
+            if int(pulse) > 0:
+                nums.add(int(rn))
         nums.difference_update(reserved)
-        if not nums:
-            nums = set(range(1, MAX_LOCAL_RELAYS + 1))
         state_by_no = {int(st.relay_no): st for st in rec.runtime.relays.values()}
         out: list[dict[str, Any]] = []
         for rn in sorted(nums):
@@ -608,7 +608,9 @@ class BusManager:
             for chip, pins in rec.runtime.mcp_relay_pins.items():
                 for lp in pins:
                     nums.add(MCP23017_RELAY_CAN_BASE + int(chip) * 16 + int(lp))
-            nums.update(rec.runtime.relays.keys())
+            for rn, pulse in rec.runtime.relay_pulse_ms.items():
+                if int(pulse) > 0:
+                    nums.add(int(rn))
             reserved: set[int] = set()
             for ro, rc in rec.runtime.shutter_map.values():
                 if ro > 0:
@@ -616,7 +618,7 @@ class BusManager:
                 if rc > 0:
                     reserved.add(int(rc))
             nums.difference_update(reserved)
-            return nums or set(range(1, 17))
+            return nums
 
     def _slcan_port_candidates(self) -> list[str]:
         ports: list[str] = []

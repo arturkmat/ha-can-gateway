@@ -60,6 +60,9 @@ def _sample_module() -> dict:
             "gpio_roles": {
                 "3": {"gpio": 3, "role": 1, "role_name": "Button", "index": 1},
                 "4": {"gpio": 4, "role": 1, "role_name": "Button", "index": 2},
+                "5": {"gpio": 5, "role": 2, "role_name": "Relay", "index": 1},
+                "6": {"gpio": 6, "role": 2, "role_name": "Relay", "index": 2},
+                "9": {"gpio": 9, "role": 2, "role_name": "Relay", "index": 4},
             },
         },
         "control_relays": [
@@ -101,18 +104,52 @@ def test_build_entities_snapshot_deduplicates():
     assert len(snapshot) == len(build_entities_for_module(mod))
 
 
-def test_build_entities_from_summary_counts_only():
+def test_build_entities_shutter_relays_not_exported_as_switches():
+    mod = {
+        "module_id": 12,
+        "name": "Rolety",
+        "runtime": {
+            "gpio_roles": {
+                "5": {"gpio": 5, "role": 2, "role_name": "Relay", "index": 1},
+                "6": {"gpio": 6, "role": 2, "role_name": "Relay", "index": 2},
+            },
+            "relay_gpio_map": {"1": 5, "2": 6},
+            "shutter_map": {"1": [1, 2]},
+            "relays": [
+                {"relay_no": 1, "on": True, "source": "local"},
+                {"relay_no": 2, "on": False, "source": "local"},
+            ],
+        },
+    }
+    entities = build_entities_for_module(mod)
+    uids = {e["unique_id"] for e in entities}
+    assert "m12_shutter1" in uids
+    assert "m12_local_relay1" not in uids
+    assert "m12_local_relay2" not in uids
+
+
+def test_build_entities_stale_summary_relay_count_ignored():
     mod = {
         "module_id": 7,
         "name": "Garaz",
         "button_count": 1,
-        "relay_count": 2,
+        "relay_count": 16,
         "shutter_count": 1,
-        "summary_details": "buttons=1 relays=2 ds18=0 shutters=1",
+        "summary_details": "buttons=1 relays=16 ds18=0 shutters=1",
+        "runtime": {
+            "relays": [{"relay_no": i, "on": False, "source": "local"} for i in range(1, 17)],
+        },
     }
     entities = build_entities_for_module(mod)
     uids = {e["unique_id"] for e in entities}
     assert uids == {"m7_online"}
+
+
+def test_build_entities_module_name_preserved_in_module_dict():
+    mod = _sample_module()
+    assert mod["name"] == "Salon"
+    entities = build_entities_for_module(mod)
+    assert entities
 
 
 def test_build_entities_from_gpio_roles_only():

@@ -559,6 +559,7 @@ SHUTTER_DIR_OPENING = 1
 SHUTTER_DIR_CLOSING = 2
 
 MODULE_NAME_MAX_LEN = 15
+MODULE_NAME_CHUNK_READ = 3  # GET_MODULE_NAME response: do 3 znaków na offset
 MODULE_NAME_PART_BYTES = 5  # znaków na ramkę CAN (arg0=part, arg1..5=dane)
 MODULE_NAME_PART_COUNT = 3  # 3 * 5 = 15
 

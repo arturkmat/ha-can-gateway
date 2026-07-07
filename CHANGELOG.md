@@ -1,5 +1,17 @@
 # Changelog — ha-can-gateway
 
+## 2026-07-07 (add-on v0.7.2 + integration v3.5.2)
+
+### fix: module names, strict entity catalog, Ingress entity table
+
+- **`GET_MODULE_NAME` (cmd 37):** odczyt chunked (offset 0,3,6,…) w `configurator_engine`, `deep_config`, `module_service` — nazwy modułów w `modules.json` i panelu Ingress.
+- **`entity_export.py`:** przekaźniki tylko z przypisanych ról GPIO / `relay_pulse_ms` / MCP role dump; wykluczenie par shutter; bez slotów z `relays=N` w GET_SUMMARY ani z pasywnej telemetrii 0x600.
+- **`deep_config`:** `read_gpio_roles_from_module()` podczas deep refresh po skanie.
+- **`bus_manager` / `configurator_engine`:** usunięty fallback 1..16 przekaźników gdy brak przypisań.
+- **Panel Ingress:** rozwijana tabela encji per moduł z `GET /api/entities`.
+- **Integracja v3.5.2:** katalog encji z dodatku bez fantomowych switchy; nazwa urządzenia z `module.name`.
+- **Testy:** `test_entity_export` — shutter-only, stale summary, module name.
+
 ## 2026-07-07 (add-on v0.7.1 + integration v3.5.1)
 
 ### fix: empty Ingress panel + phantom HA entities before add-on scan

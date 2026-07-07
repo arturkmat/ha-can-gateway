@@ -40,6 +40,8 @@ from protocol_constants import (
     HW_TYPE_OTHER,
     HW_TYPE_TO_PINOUT,
     MAX_SHUTTERS,
+    MODULE_NAME_CHUNK_READ,
+    MODULE_NAME_MAX_LEN,
     MCP23017_OUTPUT_COUNT,
     MCP23017_PIN_ROLE_RELAY,
     MCP23017_RELAY_BASE_INDEX,
@@ -99,6 +101,7 @@ class ModuleContext:
     hw_type: int = HW_TYPE_OTHER
     module_mac: int | None = None
     name: str | None = None
+    module_name_parts: dict[int, str] = field(default_factory=dict)
     firmware_build: str | None = None
     summary_details: str = ""
     button_count: int | None = None
@@ -942,8 +945,6 @@ class ConfiguratorEngine:
         reserved = self._used_shutter_relays(module_id)
         nums = set(self._iter_configured_relay_numbers(module_id))
         nums.difference_update(reserved)
-        if not nums:
-            nums = set(range(1, 17))
         out = []
         for rn in sorted(nums):
             on = bool(ctx.virtual_relay_values.get(rn, 0))
@@ -977,7 +978,9 @@ class ConfiguratorEngine:
         for chip, pins in ctx.mcp_relay_pins.items():
             for lp in pins:
                 nums.add(MCP23017_RELAY_BASE_INDEX + int(chip) * 16 + int(lp))
-        nums.update(ctx.virtual_relay_values.keys())
+        for rn, pulse in ctx.relay_pulse_ms_by_index.items():
+            if int(pulse) > 0:
+                nums.add(int(rn))
         return nums
 
     def _used_shutter_relays(self, module_id: int) -> set[int]:
@@ -1161,7 +1164,7 @@ class ConfiguratorEngine:
             ctx.summary_details = self.build_summary_details(data)
             self._apply_summary_counts(ctx.module_id, data)
         elif cmd == COMMAND_GET_MODULE_NAME:
-            ctx.name = self._ascii_from_bytes(data[3:]) or None
+            self._apply_module_name_chunk(ctx, data)
         elif cmd == COMMAND_GET_BUILD_INFO and len(data) >= 8:
             ctx.firmware_build = f"{2000 + data[3]:04d}.{data[4]:02d}.{data[5]:02d} {data[6]:02d}:{data[7]:02d}"
         elif cmd == COMMAND_GET_SHUTTER_RELAYS and len(data) >= 6:
@@ -1289,11 +1292,55 @@ class ConfiguratorEngine:
             return False
         return True
 
+    def _apply_module_name_chunk(self, ctx: ModuleContext, data: list[int]) -> None:
+        if len(data) < 8:
+            return
+        total_len = int(data[3])
+        offset = int(data[4])
+        if total_len == 0:
+            ctx.name = ""
+            ctx.module_name_parts.clear()
+            return
+        if total_len > MODULE_NAME_MAX_LEN or offset < 0 or offset >= MODULE_NAME_MAX_LEN:
+            return
+        chars = [value for value in data[5:8] if value != 0]
+        ctx.module_name_parts[offset] = bytes(chars).decode("ascii", errors="ignore")
+        expected = list(range(0, total_len, MODULE_NAME_CHUNK_READ))
+        if not all(key in ctx.module_name_parts for key in expected):
+            return
+        assembled = "".join(ctx.module_name_parts[key] for key in sorted(ctx.module_name_parts.keys()))
+        ctx.name = assembled[:total_len].strip()
+
     def _read_module_name(self, module_id: int) -> str | None:
-        resp = self.send_request(module_id, COMMAND_GET_MODULE_NAME, timeout=0.15, log_traffic=False)
-        if resp is None or len(resp) < 3 or resp[2] != 0:
-            return None
-        return self._ascii_from_bytes(resp[3:]) or None
+        parts: list[str] = []
+        expected_total: int | None = None
+        for offset in range(0, MODULE_NAME_MAX_LEN, MODULE_NAME_CHUNK_READ):
+            resp = self.send_request(
+                module_id,
+                COMMAND_GET_MODULE_NAME,
+                [offset],
+                timeout=0.2,
+                log_traffic=False,
+            )
+            if resp is None or len(resp) < 8 or int(resp[2]) != 0:
+                return None
+            total_len = int(resp[3])
+            resp_offset = int(resp[4])
+            if resp_offset != offset:
+                return None
+            if expected_total is None:
+                expected_total = total_len
+            elif expected_total != total_len:
+                return None
+            if total_len == 0:
+                return ""
+            chars = [value for value in resp[5:8] if value != 0]
+            parts.append(bytes(chars).decode("ascii", errors="ignore"))
+            if offset + MODULE_NAME_CHUNK_READ >= total_len:
+                break
+        name = "".join(parts)
+        limit = expected_total if expected_total is not None else MODULE_NAME_MAX_LEN
+        return name[:limit].strip()
 
     def _read_module_build(self, module_id: int) -> str | None:
         resp = self.send_request(module_id, COMMAND_GET_BUILD_INFO, timeout=0.15, log_traffic=False)
