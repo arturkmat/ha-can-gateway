@@ -7,20 +7,14 @@ from typing import TYPE_CHECKING, Any
 
 from protocol_constants import (
     COMMAND_GET_BUILD_INFO,
-    COMMAND_GET_MCP23017_ROLE_DUMP,
-    COMMAND_GET_SHUTTER_RELAYS,
     COMMAND_GET_SUMMARY,
     COMMAND_SCAN_MCP23017,
     COMMAND_SCAN_SENSORS,
-    MAX_SHUTTERS,
 )
 
 if TYPE_CHECKING:
     from .bus_manager import BusManager
 
-_MCP_GAP_S = 0.055
-_SHUTTER_GAP_S = 0.08
-_PULSE_GAP_S = 0.06
 _CMD_GAP_S = 0.12
 
 
@@ -31,13 +25,19 @@ def refresh_module_deep(bus: BusManager, module_id: int) -> dict[str, Any]:
 
     engine = bus._get_engine()  # noqa: SLF001
     engine.set_current_module(mid)
+    ctx = engine.context(mid)
 
-    bus.send_config(mid, COMMAND_GET_SUMMARY)
-    time.sleep(0.15)
+    summary = bus.send_config_and_wait(mid, COMMAND_GET_SUMMARY, timeout=1.0)
+    if summary and len(summary) >= 8 and int(summary[2]) == 0:
+        ctx.last_summary_response = list(summary)
+        ctx.summary_details = engine.build_summary_details(summary)
+        engine._apply_summary_counts(mid, summary)  # noqa: SLF001
+    else:
+        summary = ctx.last_summary_response
 
     name = engine._read_module_name(mid)  # noqa: SLF001
     if name is not None:
-        engine.context(mid).name = name
+        ctx.name = name
         for item in engine.discovered_modules:
             if item.get("module_id") == mid:
                 item["name"] = name
@@ -47,20 +47,7 @@ def refresh_module_deep(bus: BusManager, module_id: int) -> dict[str, Any]:
         bus.send_config(mid, cmd)
         time.sleep(_CMD_GAP_S)
 
-    engine.read_gpio_roles_from_module()
-
-    for chip in range(8):
-        bus.send_config(mid, COMMAND_GET_MCP23017_ROLE_DUMP, [chip])
-        time.sleep(_MCP_GAP_S)
-
-    for shutter_no in range(1, MAX_SHUTTERS + 1):
-        bus.send_config(mid, COMMAND_GET_SHUTTER_RELAYS, [shutter_no])
-        time.sleep(_SHUTTER_GAP_S)
-
-    relay_nos = bus.relay_numbers_for_module(mid)
-    for relay_no in sorted(relay_nos):
-        bus.send_config(mid, COMMAND_GET_RELAY_PULSE, [relay_no])
-        time.sleep(_PULSE_GAP_S)
+    engine.read_gpio_roles_from_module(summary=summary)
 
     deadline = time.time() + 3.0
     while time.time() < deadline:

@@ -1,5 +1,14 @@
 # Changelog — ha-can-gateway
 
+## 2026-07-07 (add-on v0.7.3 + integration v3.5.3)
+
+### fix: MCP23017 / 74HC595 entities missing after strict catalog (v0.7.2)
+
+- **`deep_config`:** synchroniczny `GET_SUMMARY` przed `read_gpio_roles_from_module(summary=…)`; usunięte redundantne pętle MCP/shutter/pulse oparte na `send_config` bez odpowiedzi.
+- **`configurator_engine`:** `last_summary_response` z async GET_SUMMARY; fallback `hw_flags` gdy brak summary; pełny parse MCP role dump (relay/button/sensor) → `mcp_pin_roles`; eksport `shift595_q_flags`.
+- **`entity_export.py`:** HC595 z `hw_flags` bez warunku `gpio_roles`; MCP z `mcp_pin_roles` / role dump; encje button/binary dla pinów MCP (role 2/3); bez nieużywanych kanałów MCP.
+- **Testy:** MCP relay port A pin 0, HC595 relay 17, brak encji dla unused MCP pins.
+
 ## 2026-07-07 (add-on v0.7.2 + integration v3.5.2)
 
 ### fix: module names, strict entity catalog, Ingress entity table

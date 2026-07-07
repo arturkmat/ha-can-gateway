@@ -119,6 +119,7 @@ class ModuleContext:
     shutter_relay_pairs: dict[int, dict[str, int]] = field(default_factory=dict)
     shutter_states: dict[int, dict[str, int]] = field(default_factory=dict)
     mcp_relay_pins: dict[int, set[int]] = field(default_factory=dict)
+    mcp_pin_roles: dict[int, dict[int, int]] = field(default_factory=dict)
     mcp23017_found_mask: int = 0
     shift595_q_flags: dict[int, int] = field(default_factory=dict)
     mappings: list[dict[str, Any]] = field(default_factory=list)
@@ -597,6 +598,11 @@ class ConfiguratorEngine:
             "relay_gpio_map": {str(k): v for k, v in relay_gpio_map.items()},
             "relay_pulse_ms": {str(k): v for k, v in ctx.relay_pulse_ms_by_index.items()},
             "mcp_relay_pins": {str(k): sorted(v) for k, v in ctx.mcp_relay_pins.items()},
+            "mcp_pin_roles": {
+                str(chip): {str(pin): role for pin, role in sorted(roles.items())}
+                for chip, roles in ctx.mcp_pin_roles.items()
+            },
+            "shift595_q_flags": {str(k): v for k, v in ctx.shift595_q_flags.items()},
             "button_timing": dict(ctx.button_timing),
             "mappings": list(ctx.mappings),
             "hw_flags": ctx.hw_flags,
@@ -787,8 +793,8 @@ class ConfiguratorEngine:
     def read_gpio_roles_from_module(self, *, summary: list[int] | None = None) -> None:
         mid = self.current_module_id
         ctx = self.context(mid)
-        summary = summary if summary is not None else ctx.last_summary_response
-        shutters_count, hc595_regs, mcp_present, _mcp_offset = self._summary_hw_flags(summary)
+        summary = self._resolve_summary_for_hw_flags(ctx, summary)
+        shutters_count, hc595_regs, mcp_present, _mcp_offset = self._summary_hw_flags(summary, ctx)
         self.get_all_gpio_roles()
         if shutters_count > 0:
             for shutter_num in range(1, MAX_SHUTTERS + 1):
@@ -820,7 +826,7 @@ class ConfiguratorEngine:
                     mid, COMMAND_GET_MCP23017_ROLE_DUMP, [chip], timeout=0.25, log_traffic=False
                 )
                 if resp and len(resp) >= 7 and resp[2] == 0:
-                    ctx.mcp_relay_pins[chip] = self._parse_mcp_role_dump(resp[4:8])
+                    self._store_mcp_role_dump(ctx, chip, resp[4:8])
         self.sync_relay_pulse_cache()
 
     def get_all_gpio_roles(self) -> None:
@@ -1161,6 +1167,7 @@ class ConfiguratorEngine:
         if status != 0:
             return
         if cmd == COMMAND_GET_SUMMARY:
+            ctx.last_summary_response = list(data)
             ctx.summary_details = self.build_summary_details(data)
             self._apply_summary_counts(ctx.module_id, data)
         elif cmd == COMMAND_GET_MODULE_NAME:
@@ -1175,7 +1182,10 @@ class ConfiguratorEngine:
                 ctx.shutter_relay_pairs.pop(sid, None)
         elif cmd == COMMAND_GET_MCP23017_ROLE_DUMP and len(data) >= 7:
             chip = int(data[3])
-            ctx.mcp_relay_pins[chip] = self._parse_mcp_role_dump(data[4:8])
+            self._store_mcp_role_dump(ctx, chip, data[4:8])
+        elif cmd == COMMAND_GET_SHIFT595_FLAGS and len(data) >= 5:
+            relay_idx = SHIFT595_RELAY_BASE_INDEX + int(data[3])
+            ctx.shift595_q_flags[relay_idx] = int(data[4])
         elif cmd == COMMAND_GET_RELAY_PULSE and len(data) >= 6:
             rn = int(data[3])
             ctx.relay_pulse_ms_by_index[rn] = int(data[4]) | (int(data[5]) << 8)
@@ -1201,11 +1211,43 @@ class ConfiguratorEngine:
             ctx.shutter_count = int(raw[6])
             ctx.hw_flags = int(raw[7])
 
-    def _summary_hw_flags(self, summary: list[int] | None) -> tuple[int, int, bool, int]:
-        if not summary or len(summary) < 8:
+    def _resolve_summary_for_hw_flags(
+        self,
+        ctx: ModuleContext,
+        summary: list[int] | None,
+    ) -> list[int] | None:
+        if summary is not None and len(summary) >= 8:
+            return summary
+        if ctx.last_summary_response and len(ctx.last_summary_response) >= 8:
+            return ctx.last_summary_response
+        if ctx.hw_flags or ctx.button_count is not None:
+            return [
+                ctx.module_id,
+                COMMAND_GET_SUMMARY,
+                0,
+                int(ctx.button_count or 0),
+                int(ctx.relay_count or 0),
+                0,
+                int(ctx.shutter_count or 0),
+                int(ctx.hw_flags),
+            ]
+        return summary
+
+    def _summary_hw_flags(
+        self,
+        summary: list[int] | None,
+        ctx: ModuleContext | None = None,
+    ) -> tuple[int, int, bool, int]:
+        hw_flags = 0
+        shutters = 0
+        if summary and len(summary) >= 8:
+            hw_flags = int(summary[7])
+            shutters = int(summary[6])
+        elif ctx is not None and ctx.hw_flags:
+            hw_flags = int(ctx.hw_flags)
+            shutters = int(ctx.shutter_count or 0)
+        else:
             return 0, 0, False, 0
-        hw_flags = int(summary[7])
-        shutters = int(summary[6])
         hc595_regs = (hw_flags >> 4) & 0x07
         mcp_present = bool(hw_flags & 0x08)
         mcp_offset = hw_flags & 0x07
@@ -1528,15 +1570,35 @@ class ConfiguratorEngine:
 
     @staticmethod
     def _parse_mcp_role_dump(packed: list[int]) -> set[int]:
-        pins: set[int] = set()
+        return {
+            pin
+            for pin, role in ConfiguratorEngine._parse_mcp_roles_dump(packed).items()
+            if role == MCP23017_PIN_ROLE_RELAY
+        }
+
+    @staticmethod
+    def _parse_mcp_roles_dump(packed: list[int]) -> dict[int, int]:
+        roles: dict[int, int] = {}
         if len(packed) < 4:
-            return pins
-        for i in range(16):
-            b = int(packed[i // 4]) & 0xFF
-            role = (b >> ((i % 4) * 2)) & 0x03
-            if role == 1:
-                pins.add(i)
-        return pins
+            return roles
+        for pin in range(MCP23017_OUTPUT_COUNT):
+            byte_val = int(packed[pin // 4]) & 0xFF
+            role = (byte_val >> ((pin % 4) * 2)) & 0x03
+            if role != 0:
+                roles[pin] = role
+        return roles
+
+    @staticmethod
+    def _store_mcp_role_dump(ctx: ModuleContext, chip: int, packed: list[int]) -> None:
+        roles = ConfiguratorEngine._parse_mcp_roles_dump(packed)
+        if roles:
+            ctx.mcp_pin_roles[int(chip)] = roles
+            ctx.mcp_relay_pins[int(chip)] = {
+                pin for pin, role in roles.items() if role == MCP23017_PIN_ROLE_RELAY
+            }
+        else:
+            ctx.mcp_pin_roles.pop(int(chip), None)
+            ctx.mcp_relay_pins.pop(int(chip), None)
 
     @staticmethod
     def _pinout_profile(hw_type: int) -> dict[str, Any] | None:

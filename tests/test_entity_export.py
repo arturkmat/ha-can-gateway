@@ -171,3 +171,51 @@ def test_build_entities_from_gpio_roles_only():
     assert "m9_local_relay1" in uids
     assert "m9_led_strip1" in uids
     assert "m9_local_relay2" not in uids
+
+
+def test_build_entities_mcp_relay_from_role_dump():
+    mod = {
+        "module_id": 5,
+        "runtime": {
+            "hw_flags": 0x08,
+            "mcp_relay_pins": {"0": [0]},
+            "mcp_pin_roles": {"0": {"0": 1}},
+            "relays": [{"relay_no": 57, "on": False, "source": "mcp23017"}],
+        },
+    }
+    entities = build_entities_for_module(mod)
+    uids = {e["unique_id"] for e in entities}
+    assert "m5_mcp_chip0_relay57" in uids
+    assert "m5_mcp_chip0_pin1_binary" not in uids
+
+
+def test_build_entities_unused_mcp_pins_not_exported():
+    mod = {
+        "module_id": 5,
+        "runtime": {
+            "hw_flags": 0x08,
+            "mcp_pin_roles": {"0": {"0": 1, "1": 0, "2": 0}},
+            "mcp_relay_pins": {"0": [0]},
+            "relays": [{"relay_no": 57, "on": False, "source": "mcp23017"}],
+        },
+    }
+    entities = build_entities_for_module(mod)
+    uids = {e["unique_id"] for e in entities}
+    assert "m5_mcp_chip0_relay57" in uids
+    assert "m5_mcp_chip0_relay58" not in uids
+    assert "m5_mcp_chip0_pin1_binary" not in uids
+
+
+def test_build_entities_hc595_relays_from_hw_flags():
+    mod = {
+        "module_id": 8,
+        "runtime": {
+            "hw_flags": 0x10,
+            "relays": [{"relay_no": 17, "on": True, "source": "hc595"}],
+        },
+    }
+    entities = build_entities_for_module(mod)
+    uids = {e["unique_id"] for e in entities}
+    assert "m8_hc595_relay17" in uids
+    assert "m8_hc595_relay18" in uids
+    assert "m8_local_relay1" not in uids

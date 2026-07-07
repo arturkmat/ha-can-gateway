@@ -86,6 +86,28 @@ def _mcp_pins(raw: Any) -> dict[int, set[int]]:
     return out
 
 
+def _mcp_pin_roles(raw: Any) -> dict[int, dict[int, int]]:
+    out: dict[int, dict[int, int]] = {}
+    if not isinstance(raw, dict):
+        return out
+    for chip_key, pin_map in raw.items():
+        if not isinstance(pin_map, dict):
+            continue
+        try:
+            chip_i = int(chip_key)
+        except (TypeError, ValueError):
+            continue
+        roles: dict[int, int] = {}
+        for pin_key, role in pin_map.items():
+            try:
+                roles[int(pin_key)] = int(role)
+            except (TypeError, ValueError):
+                continue
+        if roles:
+            out[chip_i] = roles
+    return out
+
+
 def _relay_state_map(rows: list[Any]) -> dict[int, bool]:
     out: dict[int, bool] = {}
     for row in rows:
@@ -317,6 +339,7 @@ def _assigned_relay_numbers(
     gpio_roles: dict[int, dict[str, Any]],
     relay_pulse_ms: dict[int, int],
     mcp_pins: dict[int, set[int]],
+    mcp_pin_roles: dict[int, dict[int, int]],
     hw_flags: int,
     shutter_reserved: set[int],
 ) -> set[int]:
@@ -348,10 +371,15 @@ def _assigned_relay_numbers(
             nums.add(int(rn))
 
     regs = hc595_register_count(hw_flags)
-    if regs > 0 and has_roles:
+    if regs > 0:
         nums.update(hc595_relay_numbers(hw_flags))
 
-    for chip_off, pins in mcp_pins.items():
+    relay_pins = dict(mcp_pins)
+    for chip_off, roles in mcp_pin_roles.items():
+        relay_pins.setdefault(chip_off, set()).update(
+            pin for pin, role in roles.items() if int(role) == 1
+        )
+    for chip_off, pins in relay_pins.items():
         for local_pin in pins:
             nums.add(MCP23017_RELAY_CAN_BASE + int(chip_off) * 16 + int(local_pin))
 
@@ -385,6 +413,7 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
     relay_pulse_ms = _int_dict(rt.get("relay_pulse_ms"))
     shutter_map = _shutter_map(rt.get("shutter_map"))
     mcp_pins = _mcp_pins(rt.get("mcp_relay_pins"))
+    mcp_pin_roles = _mcp_pin_roles(rt.get("mcp_pin_roles"))
     hw_flags = int(rt.get("hw_flags", mod.get("hw_flags") or 0))
     gpio_roles = _gpio_roles(rt.get("gpio_roles"))
     led_strips = rt.get("led_strips") if isinstance(rt.get("led_strips"), dict) else {}
@@ -402,6 +431,7 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
         gpio_roles=gpio_roles,
         relay_pulse_ms=relay_pulse_ms,
         mcp_pins=mcp_pins,
+        mcp_pin_roles=mcp_pin_roles,
         hw_flags=hw_flags,
         shutter_reserved=shutter_reserved,
     )
@@ -518,6 +548,49 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
                 icon="mdi:gesture-tap-button",
             )
         )
+
+    for chip_off, roles in sorted(mcp_pin_roles.items()):
+        for local_pin, role_code in sorted(roles.items()):
+            role_code = int(role_code)
+            if role_code == 1:
+                continue
+            if role_code == 2:
+                uid = f"m{module_id}_mcp_chip{chip_off}_pin{local_pin}_button"
+                entities.append(
+                    _entity(
+                        platform="sensor",
+                        unique_id=uid,
+                        name=f"CAN M{module_id} MCP{chip_off} A{local_pin} Button",
+                        module_id=module_id,
+                        value=None,
+                        attributes={
+                            "module_id": module_id,
+                            "chip_offset": chip_off,
+                            "local_pin": local_pin,
+                            "role": role_code,
+                            "source": "mcp23017",
+                        },
+                        icon="mdi:gesture-tap-button",
+                    )
+                )
+            elif role_code == 3:
+                uid = f"m{module_id}_mcp_chip{chip_off}_pin{local_pin}_binary"
+                entities.append(
+                    _entity(
+                        platform="binary_sensor",
+                        unique_id=uid,
+                        name=f"CAN M{module_id} MCP{chip_off} Pin {local_pin}",
+                        module_id=module_id,
+                        value=None,
+                        attributes={
+                            "module_id": module_id,
+                            "chip_offset": chip_off,
+                            "local_pin": local_pin,
+                            "role": role_code,
+                            "source": "mcp23017",
+                        },
+                    )
+                )
 
     ws2812_role = PIN_ROLE_MAP.get("WS2812")
     strip_indices: set[int] = set()
