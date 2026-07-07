@@ -1,5 +1,5 @@
 name: CAN Gateway
-version: "0.7.0"
+version: "0.7.1"
 slug: can_gateway
 description: CAN bus gateway (SLCAN / gs_usb), web panel, REST API and auto-setup of can_gateway_v3 integration.
 url: https://github.com/arturkmat/ha-can-gateway

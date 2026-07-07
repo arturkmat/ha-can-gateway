@@ -331,9 +331,6 @@ class BusManager:
             if modules:
                 live_entities = self._build_entity_catalog(modules)
                 catalog = self._merge_live_entity_values(catalog, live_entities)
-        elif live_values and self.bus_ok and not catalog:
-            modules = self._export_modules_for_catalog()
-            catalog = self._build_entity_catalog(modules) if modules else []
         return {
             "ok": True,
             "discovery_version": int(store.get("discovery_version") or 0),
@@ -375,20 +372,22 @@ class BusManager:
 
     def discovery_payload(self) -> dict[str, Any]:
         store = discovery_snapshot(scan_status=self._last_scan_status)
+        persisted_entities = list(store.get("entities") or [])
+        from module_store import entity_counts_by_module
+
+        persisted_counts = entity_counts_by_module(persisted_entities)
         live_modules = self.list_modules(include_runtime=True)
         if live_modules:
-            from module_store import entity_counts_by_module
-
-            live_entities = self._build_entity_catalog(live_modules)
-            counts = entity_counts_by_module(live_entities)
             store["modules"] = [
-                {**mod, "entity_count": counts.get(int(mod["module_id"]), 0)}
+                {
+                    **mod,
+                    "entity_count": persisted_counts.get(int(mod["module_id"]), 0),
+                }
                 if isinstance(mod.get("module_id"), int)
                 else mod
                 for mod in live_modules
             ]
             store["module_count"] = len(live_modules)
-            store["entity_count"] = len(live_entities)
         return store
 
     def list_modules(self, *, include_runtime: bool = False) -> list[dict[str, Any]]:

@@ -1,5 +1,15 @@
 # Changelog — ha-can-gateway
 
+## 2026-07-07 (add-on v0.7.1 + integration v3.5.1)
+
+### fix: empty Ingress panel + phantom HA entities before add-on scan
+
+- **Panel Ingress:** ścieżki statyczne `static/app.js` i `static/styles.css` względne (Ingress HA nie obsługuje `/static/...` od roota); baner błędów API; komunikaty „brak skanu” / błąd skanu.
+- **`bus_manager`:** `GET /api/entities` i `GET /api/discovery` nie syntetyzują encji z live runtime gdy brak `/data/entities.json` (`discovery_version=0`); liczniki encji per moduł z zapisanego katalogu.
+- **`can_gateway_v3` (add-on mode):** encje HA tworzone wyłącznie gdy `discovery_version > 0` i `entity_count > 0`; status integracji `waiting` do pierwszego skanu w panelu dodatku; przeładowanie platform tylko po zmianie `discovery_version` z gotowym katalogiem.
+- **README:** procedura usunięcia starej integracji i ponownego dodania po skanie.
+- **Testy:** `test_addon_api_catalog.py`, rozszerzone `test_can_gateway_v3_addon_sync`.
+
 ## 2026-07-07 (add-on v0.7.0 + integration v3.5.0)
 
 ### fix: unified add-on ↔ integration architecture (catalog is source of truth)

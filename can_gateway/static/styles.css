@@ -16,6 +16,14 @@ h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
   border-radius: 6px;
   margin-bottom: 0.75rem;
 }
+.error-banner {
+  background: #fee2e2;
+  color: #991b1b;
+  font-weight: 600;
+  padding: 0.55rem 0.75rem;
+  border-radius: 6px;
+  margin-bottom: 0.75rem;
+}
 .footer-bar {
   position: fixed; left: 0; right: 0; bottom: 0; height: var(--footer-h);
   background: #1f2937; color: #d1d5db; font-size: 0.75rem;

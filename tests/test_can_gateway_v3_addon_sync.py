@@ -164,3 +164,61 @@ def test_apply_addon_entities_from_summary_snapshot():
     assert 3 in coordinator.scanned_modules
     assert "m3_local_relay1" in coordinator.entity_descriptions
     assert coordinator.entity_states["m3_local_relay1"].value is False
+
+
+def test_addon_catalog_ready_requires_version_and_entities():
+    _mock_homeassistant()
+    _ensure_package("custom_components", COMP.parent)
+    _ensure_package("custom_components.can_gateway_v3", COMP)
+    addon_sync = _load_in_package(
+        "addon_sync", COMP / "addon_sync.py", "custom_components.can_gateway_v3"
+    )
+
+    assert not addon_sync.addon_catalog_ready({"discovery_version": 0, "entity_count": 0})
+    assert not addon_sync.addon_catalog_ready({"discovery_version": 1, "entity_count": 0})
+    assert not addon_sync.addon_catalog_ready({"discovery_version": 0, "entity_count": 5})
+    assert addon_sync.addon_catalog_ready({"discovery_version": 2, "entity_count": 12})
+
+
+def test_clear_addon_entities_removes_catalog_only():
+    _mock_homeassistant()
+    _ensure_package("custom_components", COMP.parent)
+    _ensure_package("custom_components.can_gateway_v3", COMP)
+    const = _load_in_package("const", COMP / "const.py", "custom_components.can_gateway_v3")
+    led_protocol = _load_in_package(
+        "led_protocol", COMP / "led_protocol.py", "custom_components.can_gateway_v3"
+    )
+    protocol = _load_in_package("protocol", COMP / "protocol.py", "custom_components.can_gateway_v3")
+    coordinator_mod = _load_in_package(
+        "coordinator", COMP / "coordinator.py", "custom_components.can_gateway_v3"
+    )
+    addon_sync = _load_in_package(
+        "addon_sync", COMP / "addon_sync.py", "custom_components.can_gateway_v3"
+    )
+
+    del led_protocol, protocol, const
+
+    coordinator = coordinator_mod.CanGatewayCoordinator(
+        SimpleNamespace(loop=SimpleNamespace(is_running=lambda: False))
+    )
+    addon_sync.apply_addon_state(
+        coordinator,
+        {
+            "modules": [{"module_id": 1, "name": "Test"}],
+            "entities": [
+                {
+                    "platform": "switch",
+                    "unique_id": "m1_local_relay1",
+                    "name": "Relay 1",
+                    "module_id": 1,
+                    "value": False,
+                    "attributes": {},
+                }
+            ],
+        },
+    )
+    assert "m1_local_relay1" in coordinator.entity_descriptions
+
+    addon_sync.clear_addon_entities(coordinator)
+    assert coordinator.entity_descriptions == {}
+    assert coordinator.entity_states == {}

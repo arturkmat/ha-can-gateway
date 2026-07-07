@@ -22,6 +22,27 @@ _SUMMARY_RE = re.compile(
 )
 
 
+def addon_catalog_ready(discovery: dict[str, Any]) -> bool:
+    """True when add-on has a persisted entity catalog from a completed scan."""
+    try:
+        version = int(discovery.get("discovery_version") or 0)
+        count = int(discovery.get("entity_count") or 0)
+    except (TypeError, ValueError):
+        return False
+    return version > 0 and count > 0
+
+
+def clear_addon_entities(coordinator: CanGatewayCoordinator) -> None:
+    """Remove all catalog entities from coordinator (add-on mode)."""
+    removed = set(coordinator.entity_descriptions.keys())
+    if not removed:
+        return
+    for uid in removed:
+        coordinator.entity_descriptions.pop(uid, None)
+        coordinator.entity_states.pop(uid, None)
+    coordinator._notify_switch_prune_listeners()
+
+
 def _int_or_none(value: Any) -> int | None:
     try:
         return int(value)
