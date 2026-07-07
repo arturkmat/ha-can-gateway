@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.components.cover import CoverEntity
+from homeassistant.components.cover import CoverEntity, CoverEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .addon_sync import apply_addon_entity_values
 from .coordinator import EntityDescription
 from .device_helpers import module_device_info
 from .entity_helpers import get_addon_client, get_can_sender, get_coordinator
@@ -50,6 +52,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
 class CanGatewayCover(CoverEntity):
     _attr_has_entity_name = True
+    _attr_supported_features = (
+        CoverEntityFeature.OPEN
+        | CoverEntityFeature.CLOSE
+        | CoverEntityFeature.STOP
+        | CoverEntityFeature.SET_POSITION
+    )
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry, coordinator, can_send, desc: EntityDescription) -> None:
         self.hass = hass
@@ -149,15 +157,17 @@ class CanGatewayCover(CoverEntity):
                 command_name,
                 int(param),
             )
-            if not result.get("ok"):
-                _LOGGER.warning(
-                    "Cover %s addon shutter command failed module=%s shutter=%s: %s",
-                    self._attr_unique_id,
-                    self._desc.module_id,
-                    shutter_no,
-                    result.get("error", result),
-                )
-            return
+            if result.get("ok"):
+                self._apply_optimistic_shutter_state(int(command), int(param))
+                await self._refresh_addon_entity_state(client)
+                return
+            _LOGGER.warning(
+                "Cover %s addon shutter command failed module=%s shutter=%s: %s",
+                self._attr_unique_id,
+                self._desc.module_id,
+                shutter_no,
+                result.get("error", result),
+            )
 
         payload = build_shutter_control_payload(shutter_no, command, param)
         await self._can_send(
@@ -166,6 +176,38 @@ class CanGatewayCover(CoverEntity):
             False,
             False,
         )
+        self._apply_optimistic_shutter_state(int(command), int(param))
+
+    async def _refresh_addon_entity_state(self, client) -> None:
+        try:
+            payload = await client.get_entities()
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("Cover %s: add-on entity refresh failed", self._attr_unique_id, exc_info=True)
+            return
+        entities = payload.get("entities") if isinstance(payload, dict) else None
+        if not isinstance(entities, list):
+            return
+        apply_addon_entity_values(self._coordinator, entities)
+        self._coordinator.notify_gateway_state()
+
+    def _apply_optimistic_shutter_state(self, command: int, param: int) -> None:
+        state = self._coordinator.get_state(self._attr_unique_id)
+        current = dict(state.value) if state is not None and isinstance(state.value, dict) else {}
+        attrs = dict(state.attributes) if state is not None else {}
+        if command == SHUTTER_CMD_STOP:
+            current["direction"] = 0
+            current["direction_text"] = "stopped"
+        elif command == SHUTTER_CMD_OPEN:
+            current["direction"] = 1
+            current["direction_text"] = "opening"
+        elif command == SHUTTER_CMD_CLOSE:
+            current["direction"] = 2
+            current["direction_text"] = "closing"
+        elif command == SHUTTER_CMD_SET_POSITION:
+            current["direction"] = 1 if int(param) > int(current.get("position") or 0) else 2
+            current["direction_text"] = "opening" if current["direction"] == 1 else "closing"
+        if current:
+            self._coordinator._set_state(self._attr_unique_id, current, attrs)
 
     def _resolve_shutter_no(self) -> int | None:
         state = self._coordinator.get_state(self._attr_unique_id)

@@ -437,12 +437,12 @@ class ConfiguratorEngine:
         command: str | int,
         param: int = 0,
     ) -> dict[str, Any]:
-        cmd_map = {"open": 1, "close": 2, "stop": 3, "position": 4}
+        cmd_map = {"open": 1, "close": 2, "stop": 3, "position": 4, "set_position": 4}
         if isinstance(command, str):
             cmd = cmd_map.get(command.strip().lower())
         else:
             cmd = int(command)
-        if cmd is None:
+        if cmd is None or cmd not in cmd_map.values():
             return {"ok": False, "error": "invalid command"}
         mid = int(module_id)
         sid = int(shutter_no)

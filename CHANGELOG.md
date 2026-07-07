@@ -1,5 +1,13 @@
 # Changelog — ha-can-gateway
 
+## 2026-07-07 (add-on v0.7.5 + integration v3.5.5)
+
+### fix: cover STOP button — state sync and command validation
+
+- **`can_gateway_v3/cover.py`:** jawne `CoverEntityFeature.STOP`; po REST `set_shutter_command` natychmiastowy refresh `/api/entities` + optymistyczne `direction=0` dla STOP (wcześniej UI zostawało w `opening`/`closing` do 5 s mimo zatrzymania na FW); fallback do `_can_send` gdy REST zwróci błąd.
+- **`configurator_engine.set_shutter_command`:** alias `set_position`, odrzucenie `cmd=0` (kierunek ≠ komenda STOP=3).
+- **Testy:** payload STOP, engine `stop`, regresja `cmd=0`.
+
 ## 2026-07-07 (add-on v0.7.4 + integration v3.5.4)
 
 ### fix: cover/shutter control via HA integration (add-on mode)

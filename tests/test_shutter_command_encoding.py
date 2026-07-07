@@ -44,6 +44,19 @@ def test_build_shutter_control_payload_open():
     ]
 
 
+def test_build_shutter_control_payload_stop():
+    assert build_shutter_control_payload(2, SHUTTER_CMD_STOP, 0) == [
+        V2_CTRL_SHUTTER_CMD,
+        2,
+        SHUTTER_CMD_STOP,
+        0,
+        0,
+        0,
+        0,
+        0,
+    ]
+
+
 def test_build_shutter_control_payload_position_clamps_param():
     assert build_shutter_control_payload(2, SHUTTER_CMD_SET_POSITION, 150)[3] == 100
     assert build_shutter_control_payload(2, SHUTTER_CMD_CLOSE, 99)[3] == 0
@@ -105,6 +118,71 @@ def test_configurator_engine_uses_v3_shutter_payload(monkeypatch):
     assert payload == build_shutter_control_payload(1, SHUTTER_CMD_CLOSE, 0)
 
 
+def test_configurator_engine_stop_command(monkeypatch):
+    ce_spec = importlib.util.spec_from_file_location(
+        "configurator_engine",
+        LIB / "configurator_engine.py",
+    )
+    ce_mod = importlib.util.module_from_spec(ce_spec)
+    sys.modules["configurator_engine"] = ce_mod
+    assert ce_spec.loader is not None
+    ce_spec.loader.exec_module(ce_mod)
+
+    sent: list[tuple[int, int, list[int]]] = []
+
+    class _FakeIo:
+        def io_acquire(self) -> None:
+            return None
+
+        def io_release(self) -> None:
+            return None
+
+        def notify(self) -> None:
+            return None
+
+        def sync_transport_macs(self) -> None:
+            return None
+
+        def recv(self, timeout: float):
+            return None
+
+    engine = ce_mod.ConfiguratorEngine(_FakeIo(), secure_can=False)
+    engine.discovered_modules = [{"module_id": 201, "has_master_key": False}]
+    monkeypatch.setattr(engine, "_io_acquire", lambda: None)
+    monkeypatch.setattr(engine, "_io_release", lambda: None)
+    monkeypatch.setattr(engine, "_refresh_secure_transport", lambda: None)
+    monkeypatch.setattr(engine, "_safe_recv", lambda _t: None)
+    monkeypatch.setattr(engine, "_normalize", lambda m: m)
+    monkeypatch.setattr(
+        engine,
+        "_secure_bus_send",
+        lambda target, can_id, data, **kwargs: sent.append((target, can_id, list(data))),
+    )
+
+    result = engine.set_shutter_command(201, 2, "stop", 0)
+    assert result["ok"] is True
+    assert sent
+    target, can_id, payload = sent[-1]
+    assert target == 201
+    assert can_id == can_v2_control_command_id(201)
+    assert payload == build_shutter_control_payload(2, SHUTTER_CMD_STOP, 0)
+
+
+def test_configurator_engine_rejects_invalid_command():
+    ce_spec = importlib.util.spec_from_file_location(
+        "configurator_engine",
+        LIB / "configurator_engine.py",
+    )
+    ce_mod = importlib.util.module_from_spec(ce_spec)
+    sys.modules["configurator_engine"] = ce_mod
+    assert ce_spec.loader is not None
+    ce_spec.loader.exec_module(ce_mod)
+    engine = ce_mod.ConfiguratorEngine(object(), secure_can=False)
+    result = engine.set_shutter_command(201, 1, 0, 0)
+    assert result["ok"] is False
+    assert result["error"] == "invalid command"
+
+
 def test_addon_setup_routes_control_before_config_reboot():
     addon_path = Path(__file__).resolve().parents[1] / "custom_components" / "can_gateway_v3"
     spec = importlib.util.spec_from_file_location(
@@ -125,6 +203,9 @@ def test_addon_setup_routes_control_before_config_reboot():
     assert data[0] == protocol.V2_CTRL_SHUTTER_CMD
     assert data[1] == shutter_no
     assert data[2] == protocol.SHUTTER_CMD_OPEN
+    stop_data = protocol.build_shutter_control_payload(shutter_no, protocol.SHUTTER_CMD_STOP, 0)
+    assert stop_data[2] == protocol.SHUTTER_CMD_STOP
+    assert stop_data[3] == 0
     # Old bug: data[0]==1 and data[1]==1 looked like reboot(module_id=1)
     assert not (
         (can_id & 0x07) == protocol.CAN_V2_CLASS_CONFIG_REQUEST
