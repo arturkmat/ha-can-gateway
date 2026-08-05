@@ -277,7 +277,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             else:
                 new_data = dict(entry.data)
                 new_data[CONF_INITIAL_SCAN_DONE] = True
-                new_data[CONF_DISCOVERED_MODULES] = await client.get_modules()
                 hass.config_entries.async_update_entry(entry, data=new_data)
                 if addon_catalog_ready(await client.get_discovery()):
                     coordinator.mark_scan_finished(
