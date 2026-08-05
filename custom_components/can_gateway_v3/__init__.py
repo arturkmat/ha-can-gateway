@@ -843,17 +843,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         return await addon_unload_entry(hass, entry)
 
-    # Usuń encje z HA entity_registry zanim czyszczysz coordinator
-    from homeassistant.helpers import entity_registry as er
-    entity_reg = er.async_get(hass)
-    entries_to_remove = [
-        ent_reg_entry.entity_id
-        for ent_reg_entry in entity_reg.entities.values()
-        if ent_reg_entry.config_entry_id == entry.entry_id
-    ]
-    for entity_id in entries_to_remove:
-        entity_reg.async_remove(entity_id)
-
     unload_ok = await hass.config_entries.async_unload_platforms(entry, list(CORE_PLATFORMS))
     runtime = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
     if runtime:
