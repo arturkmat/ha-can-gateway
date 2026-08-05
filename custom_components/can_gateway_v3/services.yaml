@@ -80,10 +80,14 @@ shutter_command:
       selector:
         select:
           options:
-            - open
-            - close
-            - stop
-            - set_position
+            - label: "Open"
+              value: "open"
+            - label: "Close"
+              value: "close"
+            - label: "Stop"
+              value: "stop"
+            - label: "Set position"
+              value: "set_position"
     position:
       name: Target position (%)
       required: false
@@ -220,10 +224,14 @@ set_relay_link:
       selector:
         select:
           options:
-            - on
-            - off
-            - any
-            - mirror
+            - label: "On"
+              value: "on"
+            - label: "Off"
+              value: "off"
+            - label: "Any"
+              value: "any"
+            - label: "Mirror"
+              value: "mirror"
     target_state:
       name: Target state (ignored for mirror)
       required: false
@@ -231,9 +239,12 @@ set_relay_link:
       selector:
         select:
           options:
-            - off
-            - on
-            - toggle
+            - label: "Off"
+              value: "off"
+            - label: "On"
+              value: "on"
+            - label: "Toggle"
+              value: "toggle"
     target_state_code:
       name: Raw target_state byte (0-255, overrides target_state)
       required: false
@@ -309,12 +320,18 @@ set_relay_bind_route:
       selector:
         select:
           options:
-            - single
-            - double
-            - triple
-            - quad
-            - quint
-            - long
+            - label: "Single"
+              value: "single"
+            - label: "Double"
+              value: "double"
+            - label: "Triple"
+              value: "triple"
+            - label: "Quad"
+              value: "quad"
+            - label: "Quint"
+              value: "quint"
+            - label: "Long"
+              value: "long"
     relay_state:
       name: Relay state
       required: false
@@ -322,9 +339,12 @@ set_relay_bind_route:
       selector:
         select:
           options:
-            - off
-            - on
-            - toggle
+            - label: "Off"
+              value: "off"
+            - label: "On"
+              value: "on"
+            - label: "Toggle"
+              value: "toggle"
     relay_state_code:
       name: Raw relay_state byte (0-255)
       required: false
@@ -399,12 +419,18 @@ set_led_binding:
       selector:
         select:
           options:
-            - single
-            - double
-            - triple
-            - quad
-            - quint
-            - long
+            - label: "Single"
+              value: "single"
+            - label: "Double"
+              value: "double"
+            - label: "Triple"
+              value: "triple"
+            - label: "Quad"
+              value: "quad"
+            - label: "Quint"
+              value: "quint"
+            - label: "Long"
+              value: "long"
     effect_id:
       name: Effect ID
       required: false
