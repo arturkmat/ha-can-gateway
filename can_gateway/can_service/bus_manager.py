@@ -376,8 +376,11 @@ class BusManager:
         from module_store import entity_counts_by_module
 
         persisted_counts = entity_counts_by_module(persisted_entities)
-        live_modules = self.list_modules(include_runtime=True)
-        if live_modules:
+        # V5.0.10 FIX: Discovery endpoint returns persisted snapshot, NOT live runtime.
+        # Do NOT call list_modules(include_runtime=True) - that waits for CAN bus response
+        # and causes timeout. Instead, return all modules from discovery_snapshot (disk).
+        modules = store.get("modules", [])
+        if modules:
             store["modules"] = [
                 {
                     **mod,
@@ -385,9 +388,9 @@ class BusManager:
                 }
                 if isinstance(mod.get("module_id"), int)
                 else mod
-                for mod in live_modules
+                for mod in modules
             ]
-            store["module_count"] = len(live_modules)
+            store["module_count"] = len(modules)
         return store
 
     def list_modules(self, *, include_runtime: bool = False) -> list[dict[str, Any]]:
