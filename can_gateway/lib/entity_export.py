@@ -342,7 +342,8 @@ def _assigned_relay_numbers(
     mcp_pin_roles: dict[int, dict[int, int]],
     hw_flags: int,
     shutter_reserved: set[int],
-) -> set[int]:
+    relay_bind_routes: dict[int, dict[str, Any]] | None = None,
+) -> tuple[set[int], dict[int, str]]:
     """Relay indices assigned in firmware — never from summary counts or passive telemetry."""
     relay_role = PIN_ROLE_MAP.get("Relay")
     nums: set[int] = set()
@@ -384,7 +385,20 @@ def _assigned_relay_numbers(
             nums.add(MCP23017_RELAY_CAN_BASE + int(chip_off) * 16 + int(local_pin))
 
     nums.difference_update(shutter_reserved)
-    return nums
+    
+    # Dodaj relaye z bindingu czasowego
+    relay_binding_type = {}
+    if relay_bind_routes:
+        for route_idx, route in relay_bind_routes.items():
+            relay_no = route.get("relay")
+            relay_state = route.get("relay_state", 0)
+            if relay_no:
+                nums.add(relay_no)
+                # Określ typ: 0-2 = permanentny, >=128 = czasowy (legacy) lub flaga BIND_FLAG_TIMED_SEC
+                binding_type = "timed" if relay_state >= 128 else "permanent"
+                relay_binding_type[relay_no] = binding_type
+    
+    return nums, relay_binding_type
 
 
 def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
@@ -426,7 +440,7 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
             shutter_reserved.add(rc)
 
     relay_states = _relay_state_map(rt.get("relays") or [])
-    relay_nos = _assigned_relay_numbers(
+    relay_nos, relay_binding_type = _assigned_relay_numbers(
         relay_gpio_map=relay_gpio_map,
         gpio_roles=gpio_roles,
         relay_pulse_ms=relay_pulse_ms,
@@ -434,6 +448,7 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
         mcp_pin_roles=mcp_pin_roles,
         hw_flags=hw_flags,
         shutter_reserved=shutter_reserved,
+        relay_bind_routes=rt.get("relay_bind_routes", {}),
     )
 
     for relay_no in sorted(relay_nos):
@@ -461,6 +476,10 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
             "local_pin": local_pin,
             "pulse_ms": pulse,
         }
+        # Dodaj binding_type dla timed relay
+        binding_type = relay_binding_type.get(relay_no, "permanent")
+        attrs["binding_type"] = binding_type
+        
         if pulse > 0:
             entities.append(
                 _entity(

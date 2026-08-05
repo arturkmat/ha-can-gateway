@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -12,6 +14,8 @@ from .protocol import can_v2_config_request_id
 from .coordinator import EntityDescription
 from .device_helpers import module_device_info
 
+_LOGGER = logging.getLogger(__name__)
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator = get_coordinator(hass, entry)
@@ -23,6 +27,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         for desc in descriptions:
             if desc.unique_id in entities:
                 continue
+            # Debug: log binding_type
+            binding_type = desc.get("binding_type", "unknown")
+            _LOGGER.debug(f"Creating switch for {desc.get('name')} (binding_type={binding_type})")
+            
             ent = CanGatewaySwitch(coordinator, can_send, desc)
             entities[desc.unique_id] = ent
             new_entities.append(ent)
