@@ -42,12 +42,14 @@ class CanGatewayAddonClient:
     async def get_modules(self) -> list[dict[str, Any]]:
         async with self._session.get(
             f"{self.base_url}/api/modules",
-            timeout=aiohttp.ClientTimeout(total=15),
+            timeout=aiohttp.ClientTimeout(total=30),
         ) as resp:
             resp.raise_for_status()
             data = await resp.json()
             rows = data.get("modules") if isinstance(data, dict) else None
-            return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+            result = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+            _LOGGER.debug(f"add-on API returned {len(result)} modules")
+            return result
 
     async def get_discovery(self) -> dict[str, Any]:
         async with self._session.get(
