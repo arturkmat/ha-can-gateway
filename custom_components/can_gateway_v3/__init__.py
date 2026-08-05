@@ -559,7 +559,7 @@ def _register_services(hass: HomeAssistant, entry: ConfigEntry, send_can) -> Non
                     vol.Required(ATTR_MODULE_ID): cv.positive_int,
                     vol.Required("shutter_no"): cv.positive_int,
                     vol.Required("command"): vol.In(["open", "close", "stop", "set_position"]),
-                    vol.Optional("position"): vol.All(cv.int, vol.Range(min=0, max=100)),
+                    vol.Optional("position"): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
                 }
             ),
         )
@@ -570,14 +570,14 @@ def _register_services(hass: HomeAssistant, entry: ConfigEntry, send_can) -> Non
             schema=vol.Schema(
                 {
                     vol.Required(ATTR_MODULE_ID): cv.positive_int,
-                    vol.Optional("strip_index", default=1): vol.All(cv.int, vol.Range(min=1, max=4)),
-                    vol.Optional("effect_id", default=LED_EFFECT_SOLID): cv.int,
-                    vol.Optional("duration_s", default=0): cv.int,
+                    vol.Optional("strip_index", default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=4)),
+                    vol.Optional("effect_id", default=LED_EFFECT_SOLID): vol.Coerce(int),
+                    vol.Optional("duration_s", default=0): vol.Coerce(int),
                     vol.Optional("strip_type", default=0): vol.In([0, 1]),
-                    vol.Optional("red"): cv.int,
-                    vol.Optional("green"): cv.int,
-                    vol.Optional("blue"): cv.int,
-                    vol.Optional("kelvin"): cv.int,
+                    vol.Optional("red"): vol.Coerce(int),
+                    vol.Optional("green"): vol.Coerce(int),
+                    vol.Optional("blue"): vol.Coerce(int),
+                    vol.Optional("kelvin"): vol.Coerce(int),
                 }
             ),
         )
@@ -599,8 +599,8 @@ def _register_services(hass: HomeAssistant, entry: ConfigEntry, send_can) -> Non
                         vol.In(["off", "on", "toggle"]),
                         cv.positive_int,
                     ),
-                    vol.Optional("target_state_code"): vol.All(cv.int, vol.Range(min=0, max=255)),
-                    vol.Optional("timed_minutes"): vol.All(cv.int, vol.Range(min=1, max=127)),
+                    vol.Optional("target_state_code"): vol.All(vol.Coerce(int), vol.Range(min=0, max=255)),
+                    vol.Optional("timed_minutes"): vol.All(vol.Coerce(int), vol.Range(min=1, max=127)),
                 }
             ),
         )
@@ -628,8 +628,8 @@ def _register_services(hass: HomeAssistant, entry: ConfigEntry, send_can) -> Non
                         vol.In(["off", "on", "toggle"]),
                         cv.positive_int,
                     ),
-                    vol.Optional("relay_state_code"): vol.All(cv.int, vol.Range(min=0, max=255)),
-                    vol.Optional("timed_minutes"): vol.All(cv.int, vol.Range(min=1, max=127)),
+                    vol.Optional("relay_state_code"): vol.All(vol.Coerce(int), vol.Range(min=0, max=255)),
+                    vol.Optional("timed_minutes"): vol.All(vol.Coerce(int), vol.Range(min=1, max=127)),
                 }
             ),
         )
@@ -648,18 +648,18 @@ def _register_services(hass: HomeAssistant, entry: ConfigEntry, send_can) -> Non
                     vol.Required(ATTR_MODULE_ID): cv.positive_int,
                     vol.Required("source_module_id"): cv.positive_int,
                     vol.Required("button"): cv.positive_int,
-                    vol.Optional("strip_index", default=1): vol.All(cv.int, vol.Range(min=1, max=4)),
+                    vol.Optional("strip_index", default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=4)),
                     vol.Optional("action", default="single"): vol.Any(
                         cv.positive_int,
                         vol.In(["single", "double", "triple", "quad", "quint", "long"]),
                     ),
-                    vol.Optional("effect_id", default=LED_EFFECT_SOLID): cv.int,
-                    vol.Optional("duration_s", default=0): cv.int,
+                    vol.Optional("effect_id", default=LED_EFFECT_SOLID): vol.Coerce(int),
+                    vol.Optional("duration_s", default=0): vol.Coerce(int),
                     vol.Optional("strip_type", default=0): vol.In([0, 1]),
-                    vol.Optional("red"): cv.int,
-                    vol.Optional("green"): cv.int,
-                    vol.Optional("blue"): cv.int,
-                    vol.Optional("kelvin"): cv.int,
+                    vol.Optional("red"): vol.Coerce(int),
+                    vol.Optional("green"): vol.Coerce(int),
+                    vol.Optional("blue"): vol.Coerce(int),
+                    vol.Optional("kelvin"): vol.Coerce(int),
                 }
             ),
         )
@@ -688,7 +688,7 @@ def _register_services(hass: HomeAssistant, entry: ConfigEntry, send_can) -> Non
                 {
                     vol.Required(ATTR_MODULE_ID): cv.positive_int,
                     vol.Optional("enable", default=True): cv.boolean,
-                    vol.Optional("timeout_min", default=30): vol.All(cv.int, vol.Range(min=1, max=120)),
+                    vol.Optional("timeout_min", default=30): vol.All(vol.Coerce(int), vol.Range(min=1, max=120)),
                     vol.Optional("erase_nvs", default=False): cv.boolean,
                 }
             ),
