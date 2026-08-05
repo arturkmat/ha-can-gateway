@@ -304,7 +304,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, list(CORE_PLATFORMS))
-    hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+    runtime = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+    if runtime:
+        coordinator = runtime.get("coordinator")
+        if coordinator:
+            coordinator.clear_all_entities()
     if DOMAIN in hass.data and not hass.data[DOMAIN]:
         hass.data.pop(DOMAIN)
     return unload_ok
