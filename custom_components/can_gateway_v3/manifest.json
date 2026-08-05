@@ -1,7 +1,7 @@
 {
   "domain": "can_gateway_v3",
   "name": "CAN Gateway v3",
-  "version": "3.5.5",
+  "version": "5.0.0",
   "documentation": "https://github.com/arturkmat/ha-can-gateway/blob/main/can_gateway/README.md",
   "issue_tracker": "https://github.com/arturkmat/ha-can-gateway/issues",
   "requirements": ["pyserial==3.5", "aiohttp>=3.9"],

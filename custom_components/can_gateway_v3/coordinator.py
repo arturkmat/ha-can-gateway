@@ -1214,6 +1214,21 @@ class CanGatewayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
 
+    def clear_all_entities(self) -> None:
+        """Purge all cached entities/states/metadata (call before reload)."""
+        self.entity_descriptions.clear()
+        self.entity_states.clear()
+        self.module_info.clear()
+        if hasattr(self, 'scanned_modules'):
+            self.scanned_modules.clear()
+        for listeners_list in self.platform_adders.values():
+            listeners_list.clear()
+        if hasattr(self, 'state_listeners'):
+            self.state_listeners.clear()
+        if hasattr(self, 'switch_prune_listeners'):
+            self.switch_prune_listeners.clear()
+        _LOGGER.info("Coordinator cleared all cached entities")
+
 # Backward alias for entity helpers
 GatewayRuntime = CanGatewayCoordinator
 

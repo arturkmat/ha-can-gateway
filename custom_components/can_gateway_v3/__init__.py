@@ -846,6 +846,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, list(CORE_PLATFORMS))
     runtime = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
     if runtime:
+        coordinator = runtime.get("coordinator")
+        if coordinator:
+            coordinator.clear_all_entities()
         bridge = runtime.get("serial_bridge")
         if bridge is not None:
             await bridge.stop()
