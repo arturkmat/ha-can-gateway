@@ -47,9 +47,12 @@ set_relay_state:
       selector:
         select:
           options:
-            - off
-            - on
-            - toggle
+            - label: "Off"
+              value: "off"
+            - label: "On"
+              value: "on"
+            - label: "Toggle"
+              value: "toggle"
 
 shutter_command:
   name: Shutter command
