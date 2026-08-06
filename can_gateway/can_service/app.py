@@ -462,7 +462,9 @@ def create_app(bus: BusManager) -> web.Application:
         if not index_path.is_file():
             _LOGGER.error("Ingress UI missing index.html (STATIC_DIR=%s)", STATIC_DIR)
             return web.Response(text="CAN Gateway — brak index.html", content_type="text/plain", status=503)
-        return web.FileResponse(index_path)
+        resp = web.FileResponse(index_path)
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return resp
 
     app.router.add_get("/", index)
     app.router.add_get("/api/health", health)
