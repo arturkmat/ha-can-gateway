@@ -62,6 +62,7 @@ class ModuleRuntimeState:
     hw_flags: int = 0
     gpio_roles: dict[str, dict[str, Any]] = field(default_factory=dict)
     gpio_values: dict[str, dict[str, Any]] = field(default_factory=dict)
+    mcp_input_state: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def relay_list(self) -> list[dict[str, Any]]:
         return [self.relays[k].to_dict() for k in sorted(self.relays.keys())]
@@ -83,6 +84,7 @@ class ModuleRuntimeState:
             "sensors": list(self.sensors),
             "gpio_roles": dict(self.gpio_roles),
             "gpio_values": dict(self.gpio_values),
+            "mcp_input_state": dict(self.mcp_input_state),
         }
 
 

@@ -10,6 +10,7 @@ from typing import Any, Callable
 from protocol_constants import (
     COMMAND_GET_BUILD_INFO,
     COMMAND_GET_BUTTON_TIMING,
+    COMMAND_GET_MCP23017_INPUT_STATE,
     COMMAND_GET_MCP23017_ROLE_DUMP,
     COMMAND_GET_MODULE_NAME,
     COMMAND_GET_RELAY_PULSE,
@@ -484,6 +485,15 @@ class BusManager:
         for chip in range(8):
             self.send_config_and_wait(mid, COMMAND_GET_MCP23017_ROLE_DUMP, [chip], timeout=0.25)
             time.sleep(0.055)
+        response = self.send_config_and_wait(mid, COMMAND_GET_MCP23017_INPUT_STATE, timeout=0.6)
+        if response is not None and len(response) >= 5 and int(response[2]) == 0:
+            with self._lock:
+                rec = self._modules.get(mid)
+                if rec is not None:
+                    rec.runtime.mcp_input_state = {
+                        "0": {"gpa": int(response[3]), "gpb": int(response[4])}
+                    }
+                    self._notify()
 
     def clear_shutter_config(self, module_id: int) -> None:
         with self._lock:

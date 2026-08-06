@@ -582,6 +582,16 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
             )
         )
 
+    mcp_input_state = rt.get("mcp_input_state") if isinstance(rt.get("mcp_input_state"), dict) else {}
+
+    def _mcp_pin_value(chip_off: int, local_pin: int) -> bool | None:
+        state = mcp_input_state.get(str(chip_off)) or mcp_input_state.get("0")
+        if not isinstance(state, dict):
+            return None
+        register = int(state.get("gpa", 0)) if int(local_pin) < 8 else int(state.get("gpb", 0))
+        bit = int(local_pin) if int(local_pin) < 8 else int(local_pin) - 8
+        return bool(register & (1 << bit))
+
     for chip_off, roles in sorted(mcp_pin_roles.items()):
         for local_pin, role_code in sorted(roles.items()):
             role_code = int(role_code)
@@ -595,7 +605,7 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
                         unique_id=uid,
                         name=f"CAN M{module_id} MCP{chip_off} A{local_pin} Button",
                         module_id=module_id,
-                        value=None,
+                        value=_mcp_pin_value(chip_off, local_pin),
                         attributes={
                             "module_id": module_id,
                             "chip_offset": chip_off,
@@ -614,7 +624,7 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
                         unique_id=uid,
                         name=f"CAN M{module_id} MCP{chip_off} Pin {local_pin}",
                         module_id=module_id,
-                        value=None,
+                        value=_mcp_pin_value(chip_off, local_pin),
                         attributes={
                             "module_id": module_id,
                             "chip_offset": chip_off,
