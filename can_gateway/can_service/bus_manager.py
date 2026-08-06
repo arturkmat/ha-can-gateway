@@ -483,7 +483,13 @@ class BusManager:
             return
         self.send_config_and_wait(mid, COMMAND_SCAN_MCP23017, timeout=1.5)
         time.sleep(0.1)
-        for chip in range(8):
+        with self._lock:
+            rec = self._modules.get(mid)
+            known_chips = sorted(int(chip) for chip in (rec.runtime.mcp_relay_pins or {}).keys()) if rec else []
+        # Firmware reports one MCP address for this module family. Do not wait
+        # through eight unsupported chip addresses during every discovery scan.
+        chips = known_chips or [0]
+        for chip in chips:
             self.send_config_and_wait(mid, COMMAND_GET_MCP23017_ROLE_DUMP, [chip], timeout=0.25)
             time.sleep(0.055)
         response = self.send_config_and_wait(mid, COMMAND_GET_MCP23017_INPUT_STATE, timeout=0.6)
