@@ -92,6 +92,7 @@ class CanGatewayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "switch": [],
             "cover": [],
             "light": [],
+            "button": [],
         }
         self.state_listeners: list[Callable[[str], None]] = []
         self.switch_prune_listeners: list[Callable[[], None]] = []
