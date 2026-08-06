@@ -112,6 +112,8 @@ class BusManager:
         self._active_port: str | None = None
         self._pulse_timers: dict[tuple[int, int], threading.Timer] = {}
         self._engine = None
+        self._watchdog_thread: threading.Thread | None = None
+        self._last_bus_activity = time.time()
 
     def _get_engine(self):
         if self._engine is None:
@@ -125,6 +127,8 @@ class BusManager:
         self._rx_thread.start()
         self._reconnect_thread = threading.Thread(target=self._reconnect_loop, name="can-reconnect", daemon=True)
         self._reconnect_thread.start()
+        self._watchdog_thread = threading.Thread(target=self._watchdog_loop, name="can-watchdog", daemon=True)
+        self._watchdog_thread.start()
 
     def stop(self) -> None:
         self._stop.set()
@@ -133,6 +137,8 @@ class BusManager:
             self._reconnect_thread.join(timeout=2.0)
         if self._rx_thread is not None:
             self._rx_thread.join(timeout=2.0)
+        if self._watchdog_thread is not None:
+            self._watchdog_thread.join(timeout=2.0)
         self._close_bus()
 
     def on_modules_changed(self, listener: Callable[[], None]) -> None:
@@ -493,12 +499,13 @@ class BusManager:
             self.send_config_and_wait(mid, COMMAND_GET_MCP23017_ROLE_DUMP, [chip], timeout=0.25)
             time.sleep(0.055)
         response = self.send_config_and_wait(mid, COMMAND_GET_MCP23017_INPUT_STATE, timeout=0.6)
+        _LOGGER.info("MCP input response module=%s raw=%s", mid, response)
         if response is not None and len(response) >= 5 and int(response[2]) == 0:
             with self._lock:
                 rec = self._modules.get(mid)
                 if rec is not None:
                     rec.runtime.mcp_input_state = {
-                        "0": {"gpa": int(response[3]), "gpb": int(response[4])}
+                        "0": {"gpa": int(response[-2]), "gpb": int(response[-1])}
                     }
                     self._notify()
 
@@ -686,6 +693,55 @@ class BusManager:
         self._close_bus()
         self._active_port = None
 
+    def _mark_bus_activity(self) -> None:
+        self._last_bus_activity = time.time()
+
+    WATCHDOG_STALL_TIMEOUT_S = 10.0
+
+    def _watchdog_loop(self) -> None:
+        """Detect a wedged _io_lock (e.g. the serial driver's recv() ignoring its
+        timeout on a degraded USB-serial link — a known class of issue on Linux)
+        and force recovery. Without this, a single stuck read holds _io_lock
+        forever: every other bus operation (relay/shutter commands, the normal
+        reconnect loop, which also takes _io_lock) blocks indefinitely, and the
+        only way out used to be a manual add-on restart. Rapid repeated button
+        presses (multiple concurrent relay commands) made this much easier to
+        trigger. _mark_bus_activity() is called on every _recv()/_send_message()
+        return (success or handled error) from any thread, so as long as I/O is
+        making progress this timer keeps resetting; it only fires when nothing
+        has completed for WATCHDOG_STALL_TIMEOUT_S, which is well above a single
+        recv/send cycle (~0.1s) or one command in a scan.
+        """
+        while not self._stop.wait(3.0):
+            if self._bus is None:
+                continue
+            stalled_for = time.time() - self._last_bus_activity
+            if stalled_for > self.WATCHDOG_STALL_TIMEOUT_S:
+                _LOGGER.error(
+                    "CAN I/O watchdog: no bus activity for %.1fs — forcing port reset "
+                    "(stuck read/write on the serial link?)",
+                    stalled_for,
+                )
+                self._force_bus_reset()
+
+    def _force_bus_reset(self) -> None:
+        # Deliberately does NOT take _io_lock: the whole point is recovering from
+        # a thread that is stuck holding it. Dropping our reference and shutting
+        # the underlying bus down from here causes the stuck recv()/send() call
+        # to raise once the OS-level handle is gone, which unblocks that thread
+        # into its normal except/_on_io_error path and releases _io_lock.
+        bus = self._bus
+        self._bus = None
+        self._active_port = None
+        with self._lock:
+            self._bus_error = "watchdog: forced port reset after I/O stall"
+        if bus is not None:
+            try:
+                bus.shutdown()
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("watchdog forced shutdown error", exc_info=True)
+        self._mark_bus_activity()
+
     def _recv(self, timeout: float):
         if self._bus is None:
             return None
@@ -693,8 +749,11 @@ class BusManager:
             with self._io_lock:
                 if self._bus is None:
                     return None
-                return self._bus.recv(timeout=timeout)
+                result = self._bus.recv(timeout=timeout)
+            self._mark_bus_activity()
+            return result
         except Exception as err:  # noqa: BLE001
+            self._mark_bus_activity()
             self._on_io_error(err)
             return None
 
@@ -706,8 +765,10 @@ class BusManager:
                 if self._bus is None:
                     return False
                 self._bus.send(message)
+            self._mark_bus_activity()
             return True
         except Exception as err:  # noqa: BLE001
+            self._mark_bus_activity()
             self._on_io_error(err)
             return False
 
@@ -1039,10 +1100,15 @@ class BusManager:
                 self.refresh_relay_telemetry(0.8)
             except Exception:  # noqa: BLE001
                 _LOGGER.debug("Post-scan relay telemetry failed", exc_info=True)
-            for rec in self._get_engine().list_modules():
-                mid = int(rec["module_id"])
+            discovered_ids = {int(item["module_id"]) for item in self._get_engine().list_modules()}
+            with self._lock:
+                persisted_ids = {int(mid) for mid in self._modules.keys()}
+            # Prioritize persisted modules so their entities receive live MCP state
+            # without waiting for a long deep refresh of every discovered module.
+            for mid in sorted(persisted_ids) + sorted(discovered_ids - persisted_ids):
                 try:
-                    _refresh_module_deep_impl(self, mid)
+                    if mid in discovered_ids:
+                        _refresh_module_deep_impl(self, mid)
                     self.ensure_relay_metadata(mid)
                 except Exception:  # noqa: BLE001
                     _LOGGER.debug("Deep refresh module %s failed", mid, exc_info=True)
