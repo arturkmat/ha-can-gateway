@@ -487,14 +487,30 @@ class BusManager:
             need_mcp = rec is None or not rec.runtime.mcp_relay_pins
         if not ((hw_flags & 0x08) or need_mcp):
             return
-        self.send_config_and_wait(mid, COMMAND_SCAN_MCP23017, timeout=1.5)
+        scan_response = self.send_config_and_wait(mid, COMMAND_SCAN_MCP23017, timeout=1.5)
         time.sleep(0.1)
         with self._lock:
             rec = self._modules.get(mid)
             known_chips = sorted(int(chip) for chip in (rec.runtime.mcp_relay_pins or {}).keys()) if rec else []
-        # Firmware reports one MCP address for this module family. Do not wait
-        # through eight unsupported chip addresses during every discovery scan.
-        chips = known_chips or [0]
+        # COMMAND_SCAN_MCP23017 actively probes I2C 0x20..0x27 and reports which
+        # addresses answered as an 8-bit found_mask (protocol_constants.py:
+        # "resp: status, found_mask"). Prefer that live result over the
+        # in-memory known_chips cache: known_chips is only ever populated by a
+        # successful ROLE_DUMP earlier in THIS process's lifetime, so on every
+        # add-on restart it starts empty -- and previously this fell back to a
+        # hardcoded [0], permanently missing any module whose chip isn't 0
+        # (e.g. module 121 at chip 6/I2C 0x26) until the next code change,
+        # since chip 0 never responds and known_chips can never get seeded.
+        scan_ok = scan_response is not None and len(scan_response) >= 3 and int(scan_response[2]) == 0
+        found_mask = int(scan_response[3]) if scan_ok and len(scan_response) > 3 else None
+        if found_mask:
+            chips = [i for i in range(8) if found_mask & (1 << i)]
+        elif known_chips:
+            chips = known_chips
+        else:
+            # Scan gave nothing usable (timeout/error) and nothing known yet --
+            # fall back to the full sweep rather than guessing chip 0.
+            chips = list(range(8))
         for chip in chips:
             self.send_config_and_wait(mid, COMMAND_GET_MCP23017_ROLE_DUMP, [chip], timeout=0.25)
             time.sleep(0.055)

@@ -1,5 +1,16 @@
 # Changelog — ha-can-gateway
 
+## 2026-08-06 (add-on v5.0.26)
+
+### fix: skan MCP23017 permanentnie gubił chip modułu po każdym restarcie dodatku (regresja z "Limit MCP role scan to reported chips")
+
+- **Objaw:** zaraz po wdrożeniu V5.0.25 (fix odczytu stanu wejść MCP) i restarcie dodatku, moduł 121 nadal dostawał `chip=0` zamiast `chip=6` przy odpytywaniu `COMMAND_GET_MCP23017_INPUT_STATE`/`ROLE_DUMP` — mimo że przed restartem `mcp_relay_pins` poprawnie znało chip 6.
+- **Przyczyna:** wcześniejsza "optymalizacja" (`chips = known_chips or [0]`) ograniczała skan ról MCP tylko do chipów już wcześniej odkrytych w `runtime.mcp_relay_pins` — ale to czysto pamięciowy cache, zerowany przy każdym starcie procesu (`_load_persisted_modules()` hydratuje tylko oddzielny słownik do snapshotów API, NIE `self._modules[mid].runtime`). Po restarcie `known_chips` zawsze zaczynało puste, więc kod zawsze próbował chip 0 — dla modułu 121 (chip 6, I2C 0x26) to się NIGDY nie powodzi, więc `known_chips` nigdy się nie zapełnia ponownie i moduł jest trwale "ślepy" na swój MCP23017 aż do kolejnej zmiany kodu.
+- **Fix:** `COMMAND_SCAN_MCP23017` (który realnie skanuje I2C 0x20..0x27 i zwraca `found_mask` — bitmaskę odpowiadających adresów) jest teraz faktycznie odczytywany zamiast być wysyłanym "w próżnię". Lista chipów do odpytania budowana jest z `found_mask` przy każdym wywołaniu `ensure_relay_metadata()`; pamięciowy cache `known_chips` służy tylko jako fallback gdy skan nic nie zwrócił, a pełne przejście 0..7 jako ostateczność gdy nic nie jest jeszcze znane.
+- **Testy:** nowy `test_ensure_relay_metadata_uses_scan_found_mask_when_nothing_known_yet` — symuluje stan "świeży proces, `mcp_relay_pins` puste" i weryfikuje że mimo to chip 6 zostaje poprawnie odkryty z `found_mask` zamiast trwale utknąć na chip 0. 61/61 przechodzi.
+
+
+
 ## 2026-08-06 (add-on v5.0.25)
 
 ### fix: binarne sensory MCP23017 modułu 121 zawsze "unknown" (błędne odpytywanie stanu wejść)

@@ -71,6 +71,48 @@ def _make_bus_with_module(module_id: int, *, known_chip: int, hw_flags: int = 0x
     return bus, rec
 
 
+def test_ensure_relay_metadata_uses_scan_found_mask_when_nothing_known_yet():
+    """Regression: on a fresh process (e.g. right after an add-on restart),
+    runtime.mcp_relay_pins is empty in memory -- nothing has been discovered
+    yet in THIS process's lifetime, even if it was discovered before the
+    restart. The old code fell back to a hardcoded chip=0 in that case, which
+    permanently misses any module whose real chip isn't 0 (module 121 is at
+    chip 6 / I2C 0x26) since chip 0 never answers and known_chips can never
+    get seeded again. COMMAND_SCAN_MCP23017's found_mask must be used instead
+    to (re)discover the real chip address every time."""
+    bus, rec = _make_bus_with_module(121, known_chip=6)
+    rec.runtime.mcp_relay_pins = {}  # simulate empty in-memory cache post-restart
+
+    role_dump_chips: list[int] = []
+
+    def fake_send(mid, command, args=None, *, timeout=1.0):
+        from protocol_constants import (
+            COMMAND_GET_MCP23017_INPUT_STATE,
+            COMMAND_GET_MCP23017_ROLE_DUMP,
+            COMMAND_SCAN_MCP23017,
+        )
+
+        if command == COMMAND_SCAN_MCP23017:
+            # status=0, found_mask=0x40 -> only bit 6 set (chip 6 present)
+            return [121, 67, 0, 0x40, 0, 0, 0, 0]
+        if command == COMMAND_GET_MCP23017_ROLE_DUMP:
+            role_dump_chips.append(args[0])
+            return [121, 70, 0, args[0], 0, 0, 0, 0]
+        if command == COMMAND_GET_MCP23017_INPUT_STATE:
+            assert args == [6], f"expected only chip 6 to be queried, got {args!r}"
+            return [121, 68, 0, 5, 0, 0, 0, 0]
+        return None
+
+    bus.send_config_and_wait = fake_send
+    bus.ensure_relay_metadata(121)
+
+    assert role_dump_chips == [6], (
+        f"expected ROLE_DUMP for chip 6 only (from found_mask), got {role_dump_chips!r} "
+        "-- falling back to chip 0 means module 121's MCP entities stay 'unknown' forever"
+    )
+    assert rec.runtime.mcp_input_state == {"6": {"gpa": 5, "gpb": 0}}
+
+
 def test_ensure_relay_metadata_sends_chip_arg_for_input_state():
     """COMMAND_GET_MCP23017_INPUT_STATE must be sent with args=[chip], exactly
     like COMMAND_GET_MCP23017_ROLE_DUMP -- omitting it is what made the
