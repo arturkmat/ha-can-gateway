@@ -1028,6 +1028,7 @@ class BusManager:
                 mid = int(rec["module_id"])
                 try:
                     _refresh_module_deep_impl(self, mid)
+                    self.ensure_relay_metadata(mid)
                 except Exception:  # noqa: BLE001
                     _LOGGER.debug("Deep refresh module %s failed", mid, exc_info=True)
             scan_at = time.time()
