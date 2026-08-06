@@ -94,6 +94,7 @@ class BusManager:
         self._options = options
         self._lock = threading.RLock()
         self._io_lock = threading.Lock()
+        self._reconnect_lock = threading.Lock()
         self._bus = None
         self._modules: dict[int, ModuleRecord] = {}
         self._persisted_modules: dict[int, dict[str, Any]] = {}
@@ -564,20 +565,28 @@ class BusManager:
         return self._try_reopen()
 
     def _try_reopen(self) -> bool:
-        if self._stop.is_set():
+        if self._stop.is_set() or not self._reconnect_lock.acquire(blocking=False):
             return False
-        self._close_bus()
-        self._open_bus()
-        if self._bus is not None:
-            with self._lock:
-                self._bus_error = None
-            _LOGGER.info("CAN bus reconnected (%s)", self._active_port or self._options.can_port)
-            return True
-        return False
+        try:
+            if self._stop.is_set():
+                return False
+            with self._io_lock:
+                if self._bus is not None and self._bus_error is None:
+                    return True
+            self._close_bus()
+            self._open_bus()
+            if self._bus is not None:
+                with self._lock:
+                    self._bus_error = None
+                _LOGGER.info("CAN bus reconnected (%s)", self._active_port or self._options.can_port)
+                return True
+            return False
+        finally:
+            self._reconnect_lock.release()
 
     def _reconnect_loop(self) -> None:
         while not self._stop.wait(5.0):
-            if self._bus is None:
+            if self._bus is None and not self._scan_lock.locked():
                 self._try_reopen()
 
     def _begin_exclusive_io(self) -> bool:
