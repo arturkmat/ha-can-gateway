@@ -1,5 +1,14 @@
 # Changelog — ha-can-gateway
 
+## 2026-08-06 (add-on v5.0.18)
+
+### fix: pozycja rolet/stan przekaźników zamrożone od ostatniego skanu (regresja z BUG #11)
+
+- **Objaw:** procent otwarcia rolety nie aktualizował się na żywo podczas jazdy (brak "animacji") — pozostawał zamrożony na wartości z ostatniego jawnego skanu magistrali.
+- **Przyczyna:** BUG #11 (V5.0.11, dzisiaj wcześniej) naprawiał problem "10 modułów zamiast 15" w `/api/entities`, zmieniając źródło listy modułów z żywego silnika (`_export_modules_for_catalog()`, filtrowało tylko moduły odpowiadające w danym momencie) na perystentny snapshot z dysku (`store["modules"]`, kompletny ale zamrożony w momencie ostatniego `persist_discovery_state()`). To naprawiło kompletność, ale jako efekt uboczny zamroziło **runtime state** (pozycja rolety, stan przekaźnika) — `/api/entities` budowało katalog encji z `mod["runtime"]` wziętego wprost z dysku, ignorując bieżący stan modułu w pamięci silnika (aktualizowany bez przerwy przez wątek RX CAN).
+- **Fix:** `entities_catalog()` w `bus_manager.py` używa teraz perystentnej listy modułów **tylko jako listy identyfikatorów** (dla kompletności — wszystkie 15, nie tylko aktualnie odpowiadające), ale dla każdego modułu resolvuje jego `runtime` przez `module_detail()`, który w pierwszej kolejności sięga po żywy kontekst silnika (`engine._contexts`/`discovered_modules`, aktualizowany na bieżąco) i dopiero w braku takiego kontekstu spada na dane z dysku. `module_detail()` nie wykonuje żadnego blokującego I/O na magistrali CAN (tylko odczyt z pamięci), więc nie ma ryzyka powrotu do timeoutu z BUG #10.
+- **Testy:** nowy test regresyjny `test_entities_catalog_uses_live_module_detail_not_frozen_disk_snapshot` weryfikuje że katalog encji odzwierciedla żywą pozycję z `module_detail()`, nie zamrożoną wartość z dysku, dla modułów mających aktywny kontekst silnika, z poprawnym fallbackiem na dysk dla modułów bez żywego kontekstu. 54/54 testów przechodzi.
+
 ## 2026-08-06 (integration v5.0.16)
 
 ### fix: przekaźniki "zombie" po wielokrotnych szybkich skanach (unique_id race condition)

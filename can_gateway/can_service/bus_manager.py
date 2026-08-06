@@ -225,12 +225,23 @@ class BusManager:
         store = discovery_snapshot(scan_status=self._last_scan_status)
         catalog = list(store.get("entities") or [])
         if live_values and self.bus_ok and catalog:
-            # V5.0.11 FIX: Use persisted modules (all 15), not just live modules (10).
-            # Entities endpoint was filtering to only live modules, causing modules 12, 101-104, 121
-            # to vanish when CAN bus only has 10 modules connected. Instead, use all persisted modules
-            # and update values from live engine.
-            modules = store.get("modules", [])
-            if modules:
+            # V5.0.11 fixed "10 modules instead of 15" by switching this to persisted
+            # (disk) modules instead of only-currently-responding engine modules.
+            # But disk modules carry a FROZEN runtime snapshot from the last explicit
+            # scan/refresh, so relay/shutter state (e.g. cover position while moving)
+            # stopped updating live — this is the follow-up fix: keep the full,
+            # persisted module LIST for completeness, but resolve each module's
+            # runtime through module_detail(), which prefers the engine's live
+            # in-memory context (updated continuously by the CAN RX loop) and only
+            # falls back to the disk snapshot when no live context exists. No
+            # blocking CAN I/O here — module_detail() only reads in-memory state.
+            persisted_modules = store.get("modules", [])
+            if persisted_modules:
+                modules = []
+                for pm in persisted_modules:
+                    mid = pm.get("module_id") if isinstance(pm, dict) else None
+                    live = self.module_detail(int(mid)) if isinstance(mid, int) else None
+                    modules.append(live if isinstance(live, dict) else pm)
                 live_entities = self._build_entity_catalog(modules)
                 catalog = self._merge_live_entity_values(catalog, live_entities)
         return {
