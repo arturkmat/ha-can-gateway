@@ -1,5 +1,20 @@
 # Changelog — ha-can-gateway
 
+## 2026-08-06 (add-on + integration v5.0.28)
+
+### fix: docelowa naprawa "unknown" na binary_sensor MCP23017 modułu 121 — dwa równoległe mechanizmy skanu MCP walczyły o tę samą magistralę
+
+- **Objaw:** mimo V5.0.25-27 (poprawny argument chip_idx, poprawne indeksy gpa/gpb, poprawne wykrywanie chipa przez found_mask, scalanie do `module_detail()`) logi pokazywały poprawny odczyt (`status=0, gpa=255, gpb=191`), a `/api/modules/121` i tak zwracał `mcp_input_state: None`.
+- **Prawdziwa przyczyna:** w kodzie istniały **dwa całkowicie niezależne mechanizmy** odczytu MCP23017 dla tego samego modułu, wywoływane jeden po drugim w tej samej rundzie deep-refresh:
+  1. `configurator_engine.py`: `read_gpio_roles_from_module()` — poprawnie skanuje `found_mask` i pobiera `ROLE_DUMP` per chip, zapisując do `ModuleContext` (`ctx.mcp_relay_pins`/`ctx.mcp_pin_roles`) — **to jest jedyne miejsce, które faktycznie zasila `module_detail()`/`/api/entities`** (przez `export_module_dict()`).
+  2. `bus_manager.py`: `ensure_relay_metadata()` (dodane w V5.0.25/26) — osobny skan tego samego modułu, zapisujący do `self._modules[mid].runtime` — **strukturę, której nic więcej w tym wdrożeniu nie zapełnia** (`/api/status` pokazywał `module_count: 0` — cały mechanizm śledzenia modułów w `bus_manager.py` jest martwy, żywe dane trzyma wyłącznie silnik `configurator_engine`).
+  - Efekt: odczyt z (2) był poprawny na poziomie logów, ale zapisywał się donikąd (`rec is not None` nigdy nie było prawdą), a jednocześnie (2) generował dodatkowy, zbędny ruch na magistrali CAN wobec tego samego modułu co (1) w tej samej rundzie — źródło przejściowych `None`/timeoutów widocznych w logach dla innych chipów.
+- **Fix:** `mcp_input_state` przeniesione do `ModuleContext` (`configurator_engine.py`) i wypełniane bezpośrednio w `read_gpio_roles_from_module()`, w tej samej pętli co już działający `ROLE_DUMP` (ten sam `found_mask`, ten sam chip) — zero dodatkowego ruchu na magistrali. `export_module_dict()` eksportuje je do `runtime["mcp_input_state"]` obok `mcp_relay_pins`/`mcp_pin_roles`. Cały zbędny, niedziałający mechanizm w `bus_manager.py` (`ensure_relay_metadata()`, wywołanie go z pętli deep-refresh, tymczasowy merge w `module_detail()`) usunięty.
+- **Testy:** `tests/test_mcp_input_state.py` przepisany pod nową lokalizację — 4 testy na `ConfiguratorEngine.read_gpio_roles_from_module()`/`export_module_dict()` (argument chip_idx, zapis stanu, brak nadpisania dobrych danych błędnym statusem, obecność w eksportowanym `runtime`). 61/61 przechodzi.
+- **Wersje:** dodatek i integracja zbumpowane razem (5.0.28) — integracja realnie się nie zmieniła od 5.0.24 (poprzednie poprawki 5.0.25-27 były wyłącznie po stronie dodatku), ale numer podniesiony dla spójności z panelem "Ustawienia -> Urządzenia i usługi -> CAN Gateway", żeby nie sugerował że coś nie dotarło. **Uwaga:** zmiana wersji integracji wymaga pełnego restartu Home Assistant Core, żeby była widoczna w UI (sam restart dodatku tego nie robi — kopiuje pliki do `/config/custom_components`, ale nie przeładowuje już załadowanego modułu Pythona).
+
+
+
 ## 2026-08-06 (add-on v5.0.27)
 
 ### fix: poprawnie odczytany stan wejść MCP23017 nigdy nie docierał do /api/entities dla modułów "żywych" w silniku

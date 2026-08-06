@@ -21,6 +21,7 @@ from protocol_constants import (
     COMMAND_GET_BUTTON_TIMING,
     COMMAND_GET_GPIO_ROLE,
     COMMAND_GET_GPIO_VALUE,
+    COMMAND_GET_MCP23017_INPUT_STATE,
     COMMAND_GET_MCP23017_ROLE_DUMP,
     COMMAND_GET_MODULE_NAME,
     COMMAND_GET_RELAY_PULSE,
@@ -117,6 +118,7 @@ class ModuleContext:
     mcp_relay_pins: dict[int, set[int]] = field(default_factory=dict)
     mcp_pin_roles: dict[int, dict[int, int]] = field(default_factory=dict)
     mcp23017_found_mask: int = 0
+    mcp_input_state: dict[int, dict[str, int]] = field(default_factory=dict)
     shift595_q_flags: dict[int, int] = field(default_factory=dict)
     mappings: list[dict[str, Any]] = field(default_factory=list)
     sensors: list[dict[str, Any]] = field(default_factory=list)
@@ -570,6 +572,7 @@ class ConfiguratorEngine:
                 str(chip): {str(pin): role for pin, role in sorted(roles.items())}
                 for chip, roles in ctx.mcp_pin_roles.items()
             },
+            "mcp_input_state": {str(chip): dict(state) for chip, state in ctx.mcp_input_state.items()},
             "shift595_q_flags": {str(k): v for k, v in ctx.shift595_q_flags.items()},
             "button_timing": dict(ctx.button_timing),
             "mappings": list(ctx.mappings),
@@ -781,6 +784,19 @@ class ConfiguratorEngine:
                 )
                 if resp and len(resp) >= 7 and resp[2] == 0:
                     self._store_mcp_role_dump(ctx, chip, resp[4:8])
+                # COMMAND_GET_MCP23017_INPUT_STATE needs the same chip_idx arg
+                # as ROLE_DUMP (undocumented in protocol_constants.py's "resp:
+                # status, gpa, gpb" comment, confirmed by the firmware
+                # answering a uniform status=2 for every chip when it's
+                # omitted). Read the live register values right alongside the
+                # role dump we already fetch for this chip -- this is what
+                # entity_export._mcp_pin_value() resolves button/binary_sensor
+                # states from.
+                input_resp = self.send_request(
+                    mid, COMMAND_GET_MCP23017_INPUT_STATE, [chip], timeout=0.25, log_traffic=False
+                )
+                if input_resp and len(input_resp) >= 5 and input_resp[2] == 0:
+                    ctx.mcp_input_state[chip] = {"gpa": int(input_resp[3]), "gpb": int(input_resp[4])}
         self.sync_relay_pulse_cache()
 
     def get_all_gpio_roles(self) -> None:

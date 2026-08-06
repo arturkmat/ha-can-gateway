@@ -10,14 +10,12 @@ from typing import Any, Callable
 from protocol_constants import (
     COMMAND_GET_BUILD_INFO,
     COMMAND_GET_BUTTON_TIMING,
-    COMMAND_GET_MCP23017_INPUT_STATE,
     COMMAND_GET_MCP23017_ROLE_DUMP,
     COMMAND_GET_MODULE_NAME,
     COMMAND_GET_RELAY_PULSE,
     COMMAND_GET_SHUTTER_RELAYS,
     COMMAND_GET_SUMMARY,
     COMMAND_REBOOT_MODULE,
-    COMMAND_SCAN_MCP23017,
     COMMAND_SET_RELAY_STATE,
     HW_TYPE_NAME_MAP,
     MCP23017_RELAY_CAN_BASE,
@@ -333,33 +331,14 @@ class BusManager:
                 return sorted(out, key=lambda r: r.get("module_id", 0))
             return [rec.to_dict() for rec in sorted(self._modules.values(), key=lambda r: r.module_id)]
 
-    def _with_mcp_input_state(self, out: dict[str, Any], mid: int) -> dict[str, Any]:
-        """engine.export_module_dict() (configurator_engine.py's own
-        ModuleContext) has no concept of live MCP23017 input register values
-        (gpa/gpb) -- it only tracks pin roles. The actual current values are
-        polled separately by this class's ensure_relay_metadata() and stored
-        in ModuleRecord.runtime.mcp_input_state. Merge that in here so
-        entity_export._mcp_pin_value() can resolve binary_sensor/sensor
-        states for MCP-wired buttons/inputs on modules the engine considers
-        "live" (discovered/has a context) -- without this, those entities
-        stay "unknown" forever even though the state was read correctly."""
-        with self._lock:
-            rec = self._modules.get(mid)
-            state = dict(rec.runtime.mcp_input_state) if rec is not None else {}
-        if state:
-            runtime = out.get("runtime")
-            if isinstance(runtime, dict):
-                runtime["mcp_input_state"] = state
-        return out
-
     def module_detail(self, module_id: int) -> dict[str, Any] | None:
         mid = int(module_id)
         engine = self._get_engine()
         for rec in engine.discovered_modules:
             if rec.get("module_id") == mid:
-                return self._with_mcp_input_state(engine.export_module_dict(mid), mid)
+                return engine.export_module_dict(mid)
         if mid in engine._contexts:  # noqa: SLF001
-            return self._with_mcp_input_state(engine.export_module_dict(mid), mid)
+            return engine.export_module_dict(mid)
         with self._lock:
             rec = self._modules.get(mid)
             if rec is None:
@@ -496,65 +475,6 @@ class BusManager:
                 if idx > 0 and gpio > 0:
                     rec.runtime.relay_gpio_map[idx] = gpio
             self._notify()
-
-    def ensure_relay_metadata(self, module_id: int) -> None:
-        """Skan MCP23017 + role dump gdy moduł ma expander (hw_flags bit3)."""
-        mid = int(module_id)
-        with self._lock:
-            rec = self._modules.get(mid)
-            hw_flags = int(rec.runtime.hw_flags) if rec is not None else 0
-            need_mcp = rec is None or not rec.runtime.mcp_relay_pins
-        if not ((hw_flags & 0x08) or need_mcp):
-            return
-        scan_response = self.send_config_and_wait(mid, COMMAND_SCAN_MCP23017, timeout=1.5)
-        time.sleep(0.1)
-        with self._lock:
-            rec = self._modules.get(mid)
-            known_chips = sorted(int(chip) for chip in (rec.runtime.mcp_relay_pins or {}).keys()) if rec else []
-        # COMMAND_SCAN_MCP23017 actively probes I2C 0x20..0x27 and reports which
-        # addresses answered as an 8-bit found_mask (protocol_constants.py:
-        # "resp: status, found_mask"). Prefer that live result over the
-        # in-memory known_chips cache: known_chips is only ever populated by a
-        # successful ROLE_DUMP earlier in THIS process's lifetime, so on every
-        # add-on restart it starts empty -- and previously this fell back to a
-        # hardcoded [0], permanently missing any module whose chip isn't 0
-        # (e.g. module 121 at chip 6/I2C 0x26) until the next code change,
-        # since chip 0 never responds and known_chips can never get seeded.
-        scan_ok = scan_response is not None and len(scan_response) >= 3 and int(scan_response[2]) == 0
-        found_mask = int(scan_response[3]) if scan_ok and len(scan_response) > 3 else None
-        if found_mask:
-            chips = [i for i in range(8) if found_mask & (1 << i)]
-        elif known_chips:
-            chips = known_chips
-        else:
-            # Scan gave nothing usable (timeout/error) and nothing known yet --
-            # fall back to the full sweep rather than guessing chip 0.
-            chips = list(range(8))
-        for chip in chips:
-            self.send_config_and_wait(mid, COMMAND_GET_MCP23017_ROLE_DUMP, [chip], timeout=0.25)
-            time.sleep(0.055)
-        # COMMAND_GET_MCP23017_INPUT_STATE requires the chip_idx arg just like
-        # ROLE_DUMP (undocumented in the protocol comment, confirmed by the
-        # firmware returning a uniform status=2 error for every module when no
-        # arg is sent, vs ROLE_DUMP -- which does send [chip] -- succeeding).
-        # Query once per known chip and store per chip offset so entity_export's
-        # per-chip lookup (falls back to "0" only when no chip-specific key
-        # exists) resolves the right register for multi-chip modules.
-        new_input_state: dict[str, dict[str, int]] = {}
-        for chip in chips:
-            response = self.send_config_and_wait(
-                mid, COMMAND_GET_MCP23017_INPUT_STATE, [chip], timeout=0.6
-            )
-            _LOGGER.info("MCP input response module=%s chip=%s raw=%s", mid, chip, response)
-            if response is not None and len(response) >= 5 and int(response[2]) == 0:
-                new_input_state[str(chip)] = {"gpa": int(response[3]), "gpb": int(response[4])}
-            time.sleep(0.055)
-        if new_input_state:
-            with self._lock:
-                rec = self._modules.get(mid)
-                if rec is not None:
-                    rec.runtime.mcp_input_state = new_input_state
-                    self._notify()
 
     def clear_shutter_config(self, module_id: int) -> None:
         with self._lock:
@@ -1155,8 +1075,16 @@ class BusManager:
             for mid in sorted(persisted_ids) + sorted(discovered_ids - persisted_ids):
                 try:
                     if mid in discovered_ids:
+                        # _refresh_module_deep_impl() -> engine.read_gpio_roles_from_module()
+                        # already does the MCP23017 scan (found_mask + per-chip
+                        # ROLE_DUMP + INPUT_STATE) when the module reports an
+                        # expander. A second, separate scan here (formerly
+                        # ensure_relay_metadata()) was redundant CAN traffic
+                        # against the same module in the same refresh pass and
+                        # wrote to a ModuleRecord store nothing else reads for
+                        # this deployment (self._modules stays empty -- module
+                        # tracking lives entirely in the engine's ModuleContext).
                         _refresh_module_deep_impl(self, mid)
-                    self.ensure_relay_metadata(mid)
                 except Exception:  # noqa: BLE001
                     _LOGGER.debug("Deep refresh module %s failed", mid, exc_info=True)
             scan_at = time.time()
