@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 from configurator_engine import ConfiguratorEngine
 from protocol_constants import (
     CAN_V2_CLASS_CONFIG_REQUEST,
-    UNKNOWN_MODULE_IDS,
     can_v2_frame_class,
 )
 
@@ -31,20 +30,7 @@ class _BusIoAdapter:
     def prepare_outgoing_frames(
         self, target_module_id: int, can_id: int, data: list[int]
     ) -> list[tuple[int, list[int]]] | None:
-        self._bus._ensure_transport_macs()  # noqa: SLF001
-        module_has_key: bool | None = None
-        if target_module_id not in UNKNOWN_MODULE_IDS:
-            module_has_key = self._bus._get_engine()._module_has_master_key_for_tx(  # noqa: SLF001
-                int(target_module_id)
-            )
-        return prepare_outgoing_frames(
-            self._bus._transport,  # noqa: SLF001
-            target_module_id,
-            can_id,
-            data,
-            module_has_master_key=module_has_key,
-            secure_can=self._bus._options.secure_can,  # noqa: SLF001
-        )
+        return prepare_outgoing_frames(target_module_id, can_id, data)
 
     def send_can_frame(self, frame_id: int, data: list[int]) -> None:
         import can
@@ -98,10 +84,10 @@ class _BusIoAdapter:
         return self._bus.ensure_bus()
 
     def invalidate_transport_macs(self) -> None:
-        self._bus._invalidate_transport_macs()  # noqa: SLF001
+        """No-op — the encrypted/secure-CAN transport was removed (plain CAN V3 only)."""
 
     def sync_transport_macs(self) -> None:
-        self._bus._sync_transport_macs_from_engine()  # noqa: SLF001
+        """No-op — the encrypted/secure-CAN transport was removed (plain CAN V3 only)."""
 
 
 def _read_mappings(engine: ConfiguratorEngine, module_id: int) -> dict[str, Any]:
@@ -113,10 +99,7 @@ def _read_mappings(engine: ConfiguratorEngine, module_id: int) -> dict[str, Any]
 
 
 def create_engine(bus: BusManager) -> ConfiguratorEngine:
-    master = bus._options.master_key_bytes if bus._options.secure_can else None  # noqa: SLF001
     return ConfiguratorEngine(
         _BusIoAdapter(bus),
-        master_key=master,
-        secure_can=bus._options.secure_can,  # noqa: SLF001
         read_mappings=_read_mappings,
     )

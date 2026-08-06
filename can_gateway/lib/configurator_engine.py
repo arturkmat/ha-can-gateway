@@ -6,15 +6,12 @@ Bez Tkinter / messagebox — tylko magistrala CAN i cache stanu modułów.
 
 from __future__ import annotations
 
-import hmac
 import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from hashlib import sha256
 from typing import Any, Callable, Protocol
 
-from can_secure_transport import is_plaintext_bootstrap_tx
 from pinout_data import DEVICE_PINOUTS
 from protocol_constants import (
     CAN_V2_CLASS_CONFIG_RESPONSE,
@@ -30,7 +27,6 @@ from protocol_constants import (
     COMMAND_GET_SHIFT595_FLAGS,
     COMMAND_GET_SHUTTER_RELAYS,
     COMMAND_GET_SUMMARY,
-    COMMAND_PROVISION_GET_MASTER_KEY_STATE,
     COMMAND_SCAN_MCP23017,
     COMMAND_SCAN_SENSORS,
     COMMAND_SET_MODULE_ID,
@@ -63,7 +59,6 @@ from protocol_constants import (
     can_v2_control_command_id,
     can_v2_frame_class,
     can_v2_frame_module_id,
-    is_plaintext_telemetry_id,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -110,7 +105,6 @@ class ModuleContext:
     relay_count: int | None = None
     shutter_count: int | None = None
     hw_flags: int = 0
-    has_master_key: bool | None = None
     last_seen_s: float = 0.0
     last_summary_response: list[int] | None = None
     gpio_info: dict[int, dict[str, Any]] = field(default_factory=dict)
@@ -137,18 +131,13 @@ class ConfiguratorEngine:
         self,
         io: CanIoBackend,
         *,
-        master_key: bytes | None = None,
-        secure_can: bool = False,
         read_mappings: Callable[[ConfiguratorEngine, int], dict[str, Any]] | None = None,
     ) -> None:
         self._io = io
-        self._secure_can = bool(secure_can)
-        self._master_key = master_key if self._secure_can else None
         self._read_mappings = read_mappings
         self._io_lock = threading.RLock()
         self._io_depth = 0
         self.discovered_modules: list[dict[str, Any]] = []
-        self._module_key_mismatch: set[int] = set()
         self._contexts: dict[int, ModuleContext] = {}
         self.current_module_id: int = 1
         self._last_scan_status = "never"
@@ -173,9 +162,7 @@ class ConfiguratorEngine:
             return {"ok": False, "error": "bus not open"}
         self._io_acquire()
         try:
-            self._io.invalidate_transport_macs()
             before = len(self.discovered_modules)
-            self._module_key_mismatch.clear()
             self.discovered_modules = []
             self._drain_rx()
             payload = [0xFF, COMMAND_GET_SUMMARY, 0, 0, 0, 0, 0, 0]
@@ -269,11 +256,6 @@ class ConfiguratorEngine:
             for module_id in sorted(touched_ids):
                 if module_id in UNKNOWN_MODULE_IDS:
                     continue
-                if self._secure_can:
-                    try:
-                        self._sync_module_master_key_state(module_id)
-                    except Exception as err:  # noqa: BLE001
-                        warnings.append(f"ID={module_id} MASTER_KEY state: {err}")
                 try:
                     name = self._read_module_name(module_id)
                     if name:
@@ -290,19 +272,12 @@ class ConfiguratorEngine:
                 except Exception as err:  # noqa: BLE001
                     warnings.append(f"ID={module_id} build info: {err}")
 
-            self._io.sync_transport_macs()
             if touched_ids:
                 try:
-                    active_relay_read = not self._secure_can or self._master_key is not None
                     self.refresh_all_module_relay_states(
                         passive_timeout_s=1.5,
-                        active=active_relay_read,
+                        active=True,
                     )
-                    if self._secure_can and not active_relay_read:
-                        warnings.append(
-                            "Ustaw master_key_hex przy secure_can=true — "
-                            "pominięto aktywny odczyt GPIO/relay (tylko telemetria pasywna)"
-                        )
                 except Exception as err:  # noqa: BLE001
                     warnings.append(f"Relay refresh: {err}")
                     _LOGGER.warning("Relay refresh during scan failed: %s", err, exc_info=True)
@@ -448,16 +423,9 @@ class ConfiguratorEngine:
         sid = int(shutter_no)
         if sid < 1 or sid > MAX_SHUTTERS:
             return {"ok": False, "error": "invalid shutter_no", "module_id": mid}
-        if self._module_key_mismatch_detected(mid):
-            return {"ok": False, "error": "MASTER_KEY mismatch", "module_id": mid}
-        for item in self.discovered_modules:
-            if item.get("module_id") == mid and item.get("has_master_key") is None:
-                self._sync_module_master_key_state(mid)
-                break
         payload = build_shutter_control_payload(sid, cmd, param)
         self._io_acquire()
         try:
-            self._refresh_secure_transport()
             self._secure_bus_send(mid, can_v2_control_command_id(mid), payload, log_traffic=False)
             deadline = time.time() + 0.45
             while time.time() < deadline:
@@ -624,8 +592,6 @@ class ConfiguratorEngine:
             "relay_count": ctx.relay_count,
             "shutter_count": ctx.shutter_count,
             "last_seen_s": ctx.last_seen_s,
-            "has_master_key": mod_meta.get("has_master_key"),
-            "key_mismatch": module_id in self._module_key_mismatch,
             "runtime": runtime,
             "control_relays": control_relays,
         }
@@ -657,11 +623,7 @@ class ConfiguratorEngine:
         self.set_current_module(module_id)
 
         if tab_index == TAB_MODULES:
-            if self._secure_can:
-                steps.append(("Stan MASTER_KEY...", lambda: self._sync_module_master_key_state(module_id)))
-                steps.append(("Weryfikacja MASTER_KEY...", lambda: self._probe_module_key_match(module_id)))
-            if not self._secure_can or not self._module_key_mismatch_detected(module_id):
-                steps.append(("Podsumowanie modulu...", lambda: self.get_summary(include_gpio_roles=False)))
+            steps.append(("Podsumowanie modulu...", lambda: self.get_summary(include_gpio_roles=False)))
             return steps
 
         if tab_index == TAB_GPIO:
@@ -679,9 +641,6 @@ class ConfiguratorEngine:
 
             def load_shutters() -> None:
                 self._ensure_summary(module_id)
-                if not self._module_has_master_key(module_id):
-                    self.context(module_id).shutter_relay_pairs.clear()
-                    return
                 shutters_count = int(self.context(module_id).shutter_count or 0)
                 if shutters_count > 0:
                     self._shutter_read_all(module_id)
@@ -716,9 +675,6 @@ class ConfiguratorEngine:
     ) -> list[int] | None:
         if not self._io.bus_ok():
             return None
-        if self._is_module_comm_blocked(target_id, command, bypass_lock=bypass_config_lock):
-            self._io.log(f"Blocked cmd 0x{command:02X} ID={target_id} (MASTER_KEY mismatch)")
-            return None
         payload = [target_id, command, 0, 0, 0, 0, 0, 0]
         if args:
             for index, value in enumerate(args[:6]):
@@ -727,8 +683,6 @@ class ConfiguratorEngine:
         if acquired:
             self._io_acquire()
         try:
-            if self._send_request_use_secure_tlv(target_id, payload):
-                return self._secure_tlv_send_and_wait(target_id, command, payload, timeout, log_traffic)
             self._secure_bus_send(target_id, can_v2_config_request_id(target_id), payload, log_traffic=log_traffic)
             return self.wait_for_response(target_id, command, timeout=timeout, log_traffic=log_traffic)
         finally:
@@ -780,7 +734,7 @@ class ConfiguratorEngine:
             ctx.hw_flags = int(response[7])
         self._apply_summary_counts(mid, response)
         ctx.summary_details = self.build_summary_details(response)
-        if not self._module_has_master_key(mid) or not include_gpio_roles:
+        if not include_gpio_roles:
             return
         self.read_gpio_roles_from_module(summary=response)
 
@@ -833,7 +787,7 @@ class ConfiguratorEngine:
         mid = self.current_module_id
         ctx = self.context(mid)
         profile = self._pinout_profile(ctx.hw_type)
-        if profile is None or mid in UNKNOWN_MODULE_IDS or not self._module_has_master_key(mid):
+        if profile is None or mid in UNKNOWN_MODULE_IDS:
             return
         gpios = self._profile_gpios(profile)
         occupied: set[int] = set()
@@ -1253,87 +1207,6 @@ class ConfiguratorEngine:
         mcp_offset = hw_flags & 0x07
         return shutters, hc595_regs, mcp_present, mcp_offset
 
-    def _sync_module_master_key_state(self, module_id: int) -> None:
-        if module_id in UNKNOWN_MODULE_IDS:
-            return
-        state = self.send_request(
-            module_id, COMMAND_PROVISION_GET_MASTER_KEY_STATE, timeout=0.35, log_traffic=False
-        )
-        if state is not None and len(state) >= 4 and state[2] == 0:
-            has_key = bool(state[3])
-            for item in self.discovered_modules:
-                if item.get("module_id") == module_id:
-                    item["has_master_key"] = has_key
-                    break
-
-    def _probe_module_key_match(self, module_id: int) -> None:
-        if module_id in UNKNOWN_MODULE_IDS or not self._module_has_master_key(module_id):
-            self._module_key_mismatch.discard(module_id)
-            return
-        if self._secure_tlv_node_key(module_id) is None:
-            return
-        response = self.send_request(
-            module_id,
-            COMMAND_GET_SUMMARY,
-            timeout=1.0,
-            log_traffic=False,
-            bypass_config_lock=True,
-        )
-        if response is not None and len(response) >= 3 and response[2] == 0:
-            self._module_key_mismatch.discard(module_id)
-            return
-        state = self.send_request(
-            module_id,
-            COMMAND_PROVISION_GET_MASTER_KEY_STATE,
-            timeout=0.8,
-            log_traffic=False,
-        )
-        if state is not None and len(state) >= 4 and state[2] == 0 and state[3] == 1:
-            self._module_key_mismatch.add(module_id)
-
-    def _module_has_master_key(self, module_id: int) -> bool:
-        if not self._secure_can:
-            return True
-        if module_id in UNKNOWN_MODULE_IDS:
-            return False
-        for item in self.discovered_modules:
-            if item.get("module_id") == module_id:
-                state = item.get("has_master_key")
-                if state is True:
-                    return True
-                if state is False:
-                    return False
-                break
-        return False
-
-    def _module_has_master_key_for_tx(self, module_id: int) -> bool:
-        """Decyzja TX: nieznany stan klucza + host z MASTER_KEY → szyfruj (0x650 itd.)."""
-        if not self._secure_can:
-            return False
-        if module_id in UNKNOWN_MODULE_IDS:
-            return False
-        for item in self.discovered_modules:
-            if item.get("module_id") == module_id:
-                state = item.get("has_master_key")
-                if state is True:
-                    return True
-                if state is False:
-                    return False
-                break
-        return self._master_key is not None
-
-    def _module_key_mismatch_detected(self, module_id: int) -> bool:
-        return module_id in self._module_key_mismatch
-
-    def _is_module_comm_blocked(self, module_id: int, command: int, *, bypass_lock: bool) -> bool:
-        if bypass_lock or module_id in UNKNOWN_MODULE_IDS:
-            return False
-        if module_id not in self._module_key_mismatch:
-            return False
-        if command in (COMMAND_SET_MODULE_ID, COMMAND_SET_MODULE_ID_BY_MAC, COMMAND_PROVISION_GET_MASTER_KEY_STATE):
-            return False
-        return True
-
     def _apply_module_name_chunk(self, ctx: ModuleContext, data: list[int]) -> None:
         if len(data) < 8:
             return
@@ -1414,7 +1287,6 @@ class ConfiguratorEngine:
                 "details": details or "brak summary",
                 "hw_type": hw_type if hw_type is not None else HW_TYPE_OTHER,
                 "module_mac": module_mac,
-                "has_master_key": None,
                 "last_seen": now,
             }
             self.discovered_modules.append(existing)
@@ -1446,78 +1318,11 @@ class ConfiguratorEngine:
     def _secure_bus_send(
         self, target_module_id: int, can_id: int, data: list[int], *, log_traffic: bool = True
     ) -> None:
+        """Send a plain CAN frame. Name kept for call-site compatibility —
+        the encrypted/secure-CAN transport was removed (plain CAN V3 only)."""
+        del target_module_id, log_traffic
         raw = bytes(int(b) & 0xFF for b in data)
-        if not self._secure_can:
-            self._io.send_can_frame(can_id, list(raw))
-            return
-        module_has_key = (
-            target_module_id not in UNKNOWN_MODULE_IDS
-            and self._module_has_master_key_for_tx(target_module_id)
-        )
-        if (
-            target_module_id not in UNKNOWN_MODULE_IDS
-            and target_module_id in self._module_key_mismatch
-            and not is_plaintext_bootstrap_tx(can_id, raw, module_has_master_key=module_has_key)
-        ):
-            raise RuntimeError(f"Module ID={target_module_id} blocked (MASTER_KEY mismatch)")
-        if is_plaintext_bootstrap_tx(can_id, raw, module_has_master_key=module_has_key):
-            self._io.send_can_frame(can_id, list(raw))
-            return
-        if is_plaintext_telemetry_id(can_id) and self._master_key is None:
-            self._io.send_can_frame(can_id, list(raw))
-            return
-        if (
-            is_plaintext_telemetry_id(can_id)
-            and target_module_id not in UNKNOWN_MODULE_IDS
-            and not module_has_key
-        ):
-            self._io.send_can_frame(can_id, list(raw))
-            return
-        if self._master_key is None:
-            self._io.send_can_frame(can_id, list(raw))
-            return
-        frames = self._io.prepare_outgoing_frames(target_module_id, can_id, data)
-        if frames is None:
-            raise RuntimeError(f"No MAC/key for module {target_module_id}")
-        for frame_id, payload in frames:
-            self._io.send_can_frame(int(frame_id), list(payload))
-
-    def _refresh_secure_transport(self) -> None:
-        self._io.sync_transport_macs()
-
-    def _send_request_use_secure_tlv(self, target_id: int, payload: list[int]) -> bool:
-        if not self._secure_can or self._master_key is None or target_id in UNKNOWN_MODULE_IDS:
-            return False
-        if not self._module_has_master_key(target_id):
-            return False
-        return self._secure_tlv_node_key(target_id) is not None
-
-    def _secure_tlv_node_key(self, module_id: int) -> bytes | None:
-        module_mac = None
-        for item in self.discovered_modules:
-            if item.get("module_id") == module_id:
-                module_mac = item.get("module_mac")
-                break
-        if module_mac is None or self._master_key is None:
-            return None
-        mac_b = bytes(
-            [
-                (int(module_mac) >> 40) & 0xFF,
-                (int(module_mac) >> 32) & 0xFF,
-                (int(module_mac) >> 24) & 0xFF,
-                (int(module_mac) >> 16) & 0xFF,
-                (int(module_mac) >> 8) & 0xFF,
-                int(module_mac) & 0xFF,
-            ]
-        )
-        digest = hmac.new(self._master_key, b"CAN-NODE-KEY|v1|" + mac_b, sha256).digest()
-        return digest[:16]
-
-    def _secure_tlv_send_and_wait(
-        self, target_id: int, command: int, payload: list[int], timeout: float, log_traffic: bool
-    ) -> list[int] | None:
-        self._secure_bus_send(target_id, can_v2_config_request_id(target_id), payload, log_traffic=log_traffic)
-        return self.wait_for_response(target_id, command, timeout=timeout, log_traffic=log_traffic)
+        self._io.send_can_frame(can_id, list(raw))
 
     def _normalize(self, message: Any) -> Any | None:
         return self._io.normalize(message)

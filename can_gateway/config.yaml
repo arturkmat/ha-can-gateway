@@ -1,7 +1,7 @@
 name: CAN Gateway
-version: "5.0.15"
+version: "5.0.16"
 slug: can_gateway
-description: CAN bus gateway (SLCAN / gs_usb), web panel, REST API and auto-setup of can_gateway_v3 integration.
+description: CAN bus gateway (SLCAN), web panel, REST API and auto-setup of can_gateway_v3 integration.
 url: https://github.com/arturkmat/ha-can-gateway
 arch:
   - aarch64
@@ -29,36 +29,36 @@ devices:
   - /dev/ttyACM0
   - /dev/ttyACM1
 options:
-  can_interface: slcan
-  can_port: /dev/ttyACM0
-  gsusb_channel: 0
-  can_bitrate: 125000
-  tty_baudrate: 115200
-  secure_can: false
-  master_key_hex: ""
-  auto_scan: true
-  auto_scan_interval_s: 10
-  mqtt_enabled: false
-  mqtt_host: core-mosquitto
-  mqtt_port: 1883
-  mqtt_username: ""
-  mqtt_password: ""
-  mqtt_topic_prefix: can_gateway
-  mqtt_interval_s: 5
+  connectivity:
+    can_interface: slcan
+    can_port: /dev/ttyACM0
+    can_bitrate: 125000
+    tty_baudrate: 115200
+  auto_scan:
+    enabled: true
+    interval_s: 10
+  mqtt:
+    enabled: false
+    host: core-mosquitto
+    port: 1883
+    username: ""
+    password: ""
+    topic_prefix: can_gateway
+    interval_s: 5
 schema:
-  can_interface: list(slcan|gs_usb)
-  can_port: str
-  gsusb_channel: int(0,15)
-  can_bitrate: list(125000|250000|500000)
-  tty_baudrate: list(115200|460800)
-  secure_can: bool
-  master_key_hex: str
-  auto_scan: bool
-  auto_scan_interval_s: int(5,120)
-  mqtt_enabled: bool
-  mqtt_host: str
-  mqtt_port: port
-  mqtt_username: str
-  mqtt_password: password
-  mqtt_topic_prefix: str
-  mqtt_interval_s: int(2,60)
+  connectivity:
+    can_interface: list(slcan)
+    can_port: str
+    can_bitrate: list(125000|250000|500000)
+    tty_baudrate: list(115200|460800)
+  auto_scan:
+    enabled: bool
+    interval_s: int(5,120)
+  mqtt:
+    enabled: bool
+    host: str
+    port: port
+    username: str
+    password: password
+    topic_prefix: str
+    interval_s: int(2,60)

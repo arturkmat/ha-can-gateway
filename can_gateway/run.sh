@@ -1,6 +1,6 @@
 #!/usr/bin/with-contenv bashio
 # =============================================================================
-# CAN Gateway add-on — SLCAN / gs_usb + web panel (Ingress) + REST API
+# CAN Gateway add-on — SLCAN + web panel (Ingress) + REST API
 # Bundled can_gateway_v3 integration deploy + Supervisor discovery on start.
 # =============================================================================
 
@@ -10,13 +10,12 @@ if [[ -x /deploy_integration.sh ]]; then
   /deploy_integration.sh
 fi
 
-CAN_INTERFACE="$(bashio::config 'can_interface')"
-CAN_PORT="$(bashio::config 'can_port')"
-CAN_BITRATE="$(bashio::config 'can_bitrate')"
-TTY_BAUD="$(bashio::config 'tty_baudrate')"
-GSUSB_CHANNEL="$(bashio::config 'gsusb_channel')"
+CAN_INTERFACE="$(bashio::config 'connectivity.can_interface')"
+CAN_PORT="$(bashio::config 'connectivity.can_port')"
+CAN_BITRATE="$(bashio::config 'connectivity.can_bitrate')"
+TTY_BAUD="$(bashio::config 'connectivity.tty_baudrate')"
 
-bashio::log.info "Interface=${CAN_INTERFACE} port=${CAN_PORT} CAN=${CAN_BITRATE} tty=${TTY_BAUD} gsusb=${GSUSB_CHANNEL}"
+bashio::log.info "Interface=${CAN_INTERFACE} port=${CAN_PORT} CAN=${CAN_BITRATE} tty=${TTY_BAUD}"
 
 if [[ "${CAN_INTERFACE}" == "slcan" ]]; then
   if [[ ! -e "${CAN_PORT}" ]]; then
@@ -27,10 +26,8 @@ if [[ "${CAN_INTERFACE}" == "slcan" ]]; then
       fi
     done
   fi
-elif [[ "${CAN_INTERFACE}" == "gs_usb" ]]; then
-  bashio::log.info "gs_usb channel ${GSUSB_CHANNEL} — port szeregowy nie jest uzywany"
 else
-  bashio::log.warning "Nieznany can_interface=${CAN_INTERFACE} — uzyj slcan lub gs_usb"
+  bashio::log.warning "Nieznany can_interface=${CAN_INTERFACE} — uzyj slcan"
 fi
 
 if [[ -x /discovery.sh ]]; then

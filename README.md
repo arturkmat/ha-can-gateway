@@ -94,11 +94,9 @@ flowchart LR
 
 2. Dodaj URL: `https://github.com/arturkmat/ha-can-gateway`
 
-3. Odśwież sklep dodatków, zainstaluj **CAN Gateway**, ustaw `can_port` i `can_bitrate` (**125000**), uruchom dodatek.
+3. Odśwież sklep dodatków, zainstaluj **CAN Gateway**, w sekcji **connectivity** ustaw `can_port` i `can_bitrate` (**125000**), uruchom dodatek.
 
-4. Dla firmware **V3** domyślnie `secure_can: false` (plain CAN). Opcja `secure_can: true` + klucz tylko dla legacy modułów ze szyfrowaniem.
-
-5. **Gotowe** — dodatek kopiuje `can_gateway_v3` do `/config/custom_components/`, przeładowuje custom components i wysyła discovery Supervisor; HA tworzy wpis integracji automatycznie (`connection_mode=addon`).
+4. **Gotowe** — dodatek kopiuje `can_gateway_v3` do `/config/custom_components/`, przeładowuje custom components i wysyła discovery Supervisor; HA tworzy wpis integracji automatycznie (`connection_mode=addon`).
 
 
 

@@ -96,11 +96,10 @@ def test_configurator_engine_uses_v3_shutter_payload(monkeypatch):
         def recv(self, timeout: float):
             return None
 
-    engine = ce_mod.ConfiguratorEngine(_FakeIo(), secure_can=False)
-    engine.discovered_modules = [{"module_id": 201, "has_master_key": False}]
+    engine = ce_mod.ConfiguratorEngine(_FakeIo())
+    engine.discovered_modules = [{"module_id": 201}]
     monkeypatch.setattr(engine, "_io_acquire", lambda: None)
     monkeypatch.setattr(engine, "_io_release", lambda: None)
-    monkeypatch.setattr(engine, "_refresh_secure_transport", lambda: None)
     monkeypatch.setattr(engine, "_safe_recv", lambda _t: None)
     monkeypatch.setattr(engine, "_normalize", lambda m: m)
     monkeypatch.setattr(
@@ -146,11 +145,10 @@ def test_configurator_engine_stop_command(monkeypatch):
         def recv(self, timeout: float):
             return None
 
-    engine = ce_mod.ConfiguratorEngine(_FakeIo(), secure_can=False)
-    engine.discovered_modules = [{"module_id": 201, "has_master_key": False}]
+    engine = ce_mod.ConfiguratorEngine(_FakeIo())
+    engine.discovered_modules = [{"module_id": 201}]
     monkeypatch.setattr(engine, "_io_acquire", lambda: None)
     monkeypatch.setattr(engine, "_io_release", lambda: None)
-    monkeypatch.setattr(engine, "_refresh_secure_transport", lambda: None)
     monkeypatch.setattr(engine, "_safe_recv", lambda _t: None)
     monkeypatch.setattr(engine, "_normalize", lambda m: m)
     monkeypatch.setattr(
@@ -177,7 +175,7 @@ def test_configurator_engine_rejects_invalid_command():
     sys.modules["configurator_engine"] = ce_mod
     assert ce_spec.loader is not None
     ce_spec.loader.exec_module(ce_mod)
-    engine = ce_mod.ConfiguratorEngine(object(), secure_can=False)
+    engine = ce_mod.ConfiguratorEngine(object())
     result = engine.set_shutter_command(201, 1, 0, 0)
     assert result["ok"] is False
     assert result["error"] == "invalid command"

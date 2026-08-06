@@ -1,5 +1,23 @@
 # Changelog — ha-can-gateway
 
+## 2026-08-06 (add-on v5.0.16)
+
+### refactor: usunięcie gs_usb i secure_can/MASTER_KEY, grupowanie opcji dodatku
+
+Motywacja: dodatek miał 16 opcji konfiguracyjnych, sporo z nich nieużywanych w rzeczywistym wdrożeniu (WeAct USB2CAN po SLCAN, plain CAN V3 bez szyfrowania). Firmware V3 nie implementuje już kanału Secure CAN; kod obsługujący `secure_can`/MASTER_KEY był martwy w praktyce, a `gs_usb` to alternatywny sterownik USB-CAN nieużywany przy obecnym sprzęcie.
+
+**Usunięte całkowicie:**
+- **gs_usb**: monkey-patch `_apply_cannectivity_gs_usb_out_ep_patch()`, gałąź `if iface == CAN_INTERFACE_GS_USB` w `bus_manager._open_bus()`, opcje `gsusb_channel`/`can_interface: gs_usb`, zależność `gs-usb` z Dockerfile. `can_interface` zostaje jako pole (obecnie zawsze `slcan`), zachowane dla ewentualnej przyszłej rozszerzalności.
+- **secure_can / MASTER_KEY**: cały plik `lib/can_secure_transport.py` (AES-ECB + HMAC-SHA256, `SecureCanTransport`), `can_service/provision_service.py` + 3 endpointy REST (`/api/modules/{id}/master-key` GET/POST, `/api/modules/{id}/provision-state`), `lib/can_provisioner.py` (osierocony, nigdzie nieimportowany), `lib/profile_schema.py` (osierocony). W `configurator_engine.py` usunięte: pola `_secure_can`/`_master_key`/`has_master_key`, metody `_sync_module_master_key_state`, `_probe_module_key_match`, `_module_has_master_key(_for_tx)`, `_module_key_mismatch_detected`, `_is_module_comm_blocked`, `_send_request_use_secure_tlv`, `_secure_tlv_node_key(_send_and_wait)`; `_secure_bus_send` uproszczone do bezpośredniego `send_can_frame` (nazwa zachowana dla kompatybilności wywołań). `can_send.prepare_outgoing_frames` przycięte z ~30 linii do 3 (zawsze plaintext). Usunięte pola `AddonOptions.secure_can`/`master_key_hex`/`master_key_bytes`.
+- Zduplikowana logika w `bus_manager.discovery_scan()` (`if secure_can... elif not secure_can...` z identycznym ciałem) scalona w jedną bezwarunkową pętlę.
+- Panel web: baner `key-banner` (JS `updateKeyBanner`, HTML element, CSS reguła) i wiersz „Secure CAN” w tabelce statusu — martwe UI bez odpowiednika w API.
+
+**Grupowanie pozostałych opcji** (opcja użytkownika: „grupowanie tylko dla pozostałych opcji"): `config.yaml` `options`/`schema` przeorganizowane z płaskiej listy 16 pól na 3 zagnieżdżone sekcje — `connectivity` (can_interface, can_port, can_bitrate, tty_baudrate), `auto_scan` (enabled, interval_s), `mqtt` (enabled, host, port, username, password, topic_prefix, interval_s). Supervisor renderuje zagnieżdżone obiekty jako zwijane sekcje w UI konfiguracji dodatku. `options.py` (`load_options()`) i `run.sh` (`bashio::config 'connectivity.can_interface'` itd.) zaktualizowane pod nową strukturę.
+
+**Breaking change:** struktura `options.json` zmienia się z płaskiej na zagnieżdżoną — istniejąca konfiguracja dodatku wymaga ponownego ustawienia w UI Supervisor po aktualizacji (zaakceptowane świadomie — jedyny użytkownik tego wdrożenia).
+
+**Testy:** `test_can_send_plaintext.py` przepisany pod nową sygnaturę `prepare_outgoing_frames(module_id, can_id, data)`; `test_scan_without_master_key.py` usunięty (testował warunkowe `active_relay_read` na podstawie `master_key`, które już nie istnieje — `refresh_all_module_relay_states` woła się teraz zawsze z `active=True`); `test_shutter_command_encoding.py` zaktualizowany pod nowy konstruktor `ConfiguratorEngine(io)` bez `secure_can`/`master_key`. 53/53 testów przechodzi.
+
 ## 2026-08-06 (add-on v5.0.15)
 
 ### refactor: usunięcie trybu "direct serial", integracja wyłącznie w trybie add-on

@@ -7,7 +7,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from can_secure_transport import SecureCanTransport
 from protocol_constants import (
     COMMAND_GET_BUILD_INFO,
     COMMAND_GET_BUTTON_TIMING,
@@ -40,45 +39,11 @@ from .module_state import (
     decode_relays_0x600,
     parse_mcp_role_dump,
 )
-from .options import AddonOptions, CAN_INTERFACE_GS_USB, CAN_INTERFACE_SLCAN
+from .options import AddonOptions, CAN_INTERFACE_SLCAN
 
 _LOGGER = logging.getLogger(__name__)
 
 SERIAL_BAUD_CANDIDATES = (115200, 460800)
-_gs_usb_out_ep_patch_applied = False
-
-
-def _apply_cannectivity_gs_usb_out_ep_patch() -> None:
-    global _gs_usb_out_ep_patch_applied
-    if _gs_usb_out_ep_patch_applied:
-        return
-    try:
-        from gs_usb.constants import GS_CAN_MODE_HW_TIMESTAMP
-        from gs_usb.gs_usb import (
-            GS_USB_CANNECTIVITY_PRODUCT_ID,
-            GS_USB_CANNECTIVITY_VENDOR_ID,
-            GsUsb,
-        )
-    except ImportError:
-        return
-
-    def _send(self, frame):
-        hw_timestamps = (
-            (self.device_flags & GS_CAN_MODE_HW_TIMESTAMP) == GS_CAN_MODE_HW_TIMESTAMP
-        )
-        packed = frame.pack(hw_timestamps)
-        dev = self.gs_usb
-        if (
-            dev.idVendor == GS_USB_CANNECTIVITY_PRODUCT_ID
-            and dev.idProduct == GS_USB_CANNECTIVITY_PRODUCT_ID
-        ):
-            dev.write(0x01, packed)
-        else:
-            dev.write(0x02, packed)
-        return True
-
-    GsUsb.send = _send
-    _gs_usb_out_ep_patch_applied = True
 _BROADCAST_ATTEMPTS = 3
 _BROADCAST_GAP_S = 0.08
 _PASSIVE_LISTEN_S = 4.5
@@ -122,14 +87,13 @@ class ModuleRecord:
 
 
 class BusManager:
-    """Właściciel magistrali CAN — SLCAN + gs_usb."""
+    """Właściciel magistrali CAN — SLCAN."""
 
     def __init__(self, options: AddonOptions) -> None:
         self._options = options
         self._lock = threading.RLock()
         self._io_lock = threading.Lock()
         self._bus = None
-        self._transport: SecureCanTransport | None = None
         self._modules: dict[int, ModuleRecord] = {}
         self._persisted_modules: dict[int, dict[str, Any]] = {}
         self._load_persisted_modules()
@@ -146,44 +110,6 @@ class BusManager:
         self._active_port: str | None = None
         self._pulse_timers: dict[tuple[int, int], threading.Timer] = {}
         self._engine = None
-        self._transport_macs_valid = False
-
-    def _invalidate_transport_macs(self) -> None:
-        self._transport_macs_valid = False
-
-    def _register_mac_int(self, module_id: int, module_mac: int) -> None:
-        if self._transport is None:
-            return
-        mac_b = bytes(
-            [
-                (int(module_mac) >> 40) & 0xFF,
-                (int(module_mac) >> 32) & 0xFF,
-                (int(module_mac) >> 24) & 0xFF,
-                (int(module_mac) >> 16) & 0xFF,
-                (int(module_mac) >> 8) & 0xFF,
-                int(module_mac) & 0xFF,
-            ]
-        )
-        self._transport.register_mac(int(module_id), mac_b)
-
-    def _sync_transport_macs_from_engine(self) -> None:
-        if self._transport is None:
-            return
-        engine = self._engine
-        if engine is None:
-            return
-        for item in engine.discovered_modules:
-            mid = item.get("module_id")
-            mac = item.get("module_mac")
-            if mid is None or mac is None or int(mid) in UNKNOWN_MODULE_IDS:
-                continue
-            self._register_mac_int(int(mid), int(mac))
-        self._transport_macs_valid = True
-
-    def _ensure_transport_macs(self) -> None:
-        if self._transport_macs_valid:
-            return
-        self._sync_transport_macs_from_engine()
 
     def _get_engine(self):
         if self._engine is None:
@@ -191,17 +117,7 @@ class BusManager:
         return self._engine
 
     def start(self) -> None:
-        if self._options.secure_can:
-            master = self._options.master_key_bytes
-            if master is not None:
-                self._transport = SecureCanTransport(master_key=master)
-                _LOGGER.info("Secure CAN enabled (MASTER_KEY %d bytes)", len(master))
-            elif self._options.master_key_hex.strip():
-                _LOGGER.error("Niepoprawny MASTER_KEY — wymagane 64 znaki hex przy secure_can=true")
-        else:
-            if self._options.master_key_hex.strip():
-                _LOGGER.info("MASTER_KEY w opcjach ignorowany — secure_can=false (domyślny tryb V3)")
-            _LOGGER.info("Plain CAN mode (V3) — brak szyfrowania CONFIG")
+        _LOGGER.info("Plain CAN mode (V3) — brak szyfrowania CONFIG")
         self._open_bus()
         self._rx_thread = threading.Thread(target=self._rx_loop, name="can-rx", daemon=True)
         self._rx_thread.start()
@@ -233,29 +149,13 @@ class BusManager:
 
     def status(self) -> dict[str, Any]:
         with self._lock:
-            master_ok = self._options.master_key_bytes is not None
-            master_hex = self._options.master_key_hex.strip()
-            master_invalid = bool(master_hex) and not master_ok
             return {
                 "bus_ok": self.bus_ok,
                 "bus_error": self._bus_error,
                 "can_interface": self._options.can_interface,
                 "can_port": self._active_port or self._options.can_port,
                 "configured_port": self._options.can_port,
-                "gsusb_channel": self._options.gsusb_channel,
                 "can_bitrate": self._options.can_bitrate,
-                "secure_enabled": self._transport is not None,
-                "master_key_configured": master_ok,
-                "master_key_invalid": master_invalid,
-                "master_key_required_hint": (
-                    None
-                    if not self._options.secure_can
-                    else (
-                        None
-                        if master_ok
-                        else "Ustaw master_key_hex w konfiguracji dodatku (64 znaki hex) dla modułów Secure CAN"
-                    )
-                ),
                 "module_count": len(self._modules),
                 "last_scan_status": self._last_scan_status,
                 "last_scan_at": self._last_scan_at,
@@ -312,7 +212,6 @@ class BusManager:
 
     def full_state(self) -> dict[str, Any]:
         if self.bus_ok:
-            self._ensure_transport_macs()
             self.collect_relay_state_frames(0.15)
         modules = self._export_modules_for_catalog()
         live_entities = self._build_entity_catalog(modules) if modules else []
@@ -450,7 +349,6 @@ class BusManager:
 
     def collect_relay_state_frames(self, timeout_s: float = 1.0) -> None:
         """Odbierz broadcast 0x600/0x602 — jak konfigurator _collect_relay_state_frames."""
-        self._ensure_transport_macs()
         deadline = time.time() + timeout_s
         while time.time() < deadline:
             self.pump_rx(min(0.05, max(0.0, deadline - time.time())))
@@ -459,7 +357,6 @@ class BusManager:
         """Passive refresh stanów przekaźników (0x600/0x601/0x602)."""
         if not self.bus_ok:
             return
-        self._ensure_transport_macs()
         self.collect_relay_state_frames(timeout_s)
 
     def _relay_controls_from_record(self, rec: ModuleRecord) -> list[dict[str, Any]]:
@@ -695,22 +592,6 @@ class BusManager:
 
         iface = self._options.can_interface
         bitrate = self._options.can_bitrate
-        if iface == CAN_INTERFACE_GS_USB:
-            try:
-                _apply_cannectivity_gs_usb_out_ep_patch()
-                self._bus = can.Bus(
-                    interface="gs_usb",
-                    channel=int(self._options.gsusb_channel),
-                    bitrate=bitrate,
-                )
-                self._bus_error = None
-                _LOGGER.info("gs_usb channel %d (CAN %d)", self._options.gsusb_channel, bitrate)
-                return
-            except Exception as err:  # noqa: BLE001
-                self._bus_error = f"Cannot open gs_usb channel {self._options.gsusb_channel}: {err}"
-                _LOGGER.error(self._bus_error)
-                return
-
         if iface != CAN_INTERFACE_SLCAN:
             self._bus_error = f"Nieobsługiwany can_interface: {iface}"
             return
@@ -796,34 +677,7 @@ class BusManager:
             return False
 
     def _normalize_message(self, message):
-        if message is None:
-            return None
-        if self._transport is None:
-            return message
-        peer = list(message.data)[0] if message.data else 0
-        unwrapped = self._transport.unwrap_incoming(
-            message.arbitration_id,
-            bytes(message.data),
-            default_peer=peer,
-        )
-        if unwrapped is None:
-            return None
-        can_id, ext, data = unwrapped
-        import can
-
-        return can.Message(arbitration_id=can_id, is_extended_id=ext, data=list(data))
-
-    def _register_mac(self, module_id: int, mac_text: str) -> None:
-        if self._transport is None or not mac_text:
-            return
-        parts = mac_text.replace("-", ":").split(":")
-        if len(parts) != 6:
-            return
-        try:
-            mac_b = bytes(int(p, 16) for p in parts)
-        except ValueError:
-            return
-        self._transport.register_mac(module_id, mac_b)
+        return message
 
     def _get_module(self, module_id: int) -> ModuleRecord | None:
         if module_id in UNKNOWN_MODULE_IDS:
@@ -1057,31 +911,9 @@ class BusManager:
         if not self.ensure_bus():
             return False
         module_id = int(data[0]) if data else 0xFF
-        self._sync_transport_macs_from_engine()
-        module_has_key: bool | None = None
-        if module_id not in UNKNOWN_MODULE_IDS:
-            module_has_key = self._get_engine()._module_has_master_key_for_tx(module_id)  # noqa: SLF001
-        frames = prepare_outgoing_frames(
-            self._transport,
-            module_id,
-            can_id,
-            data,
-            module_has_master_key=module_has_key,
-            secure_can=self._options.secure_can,
-        )
+        frames = prepare_outgoing_frames(module_id, can_id, data)
         if not frames:
-            if self._options.secure_can:
-                _LOGGER.warning(
-                    "TX blocked can_id=0x%X module=%s (secure_can=true — brak klucza/MAC?)",
-                    can_id,
-                    module_id,
-                )
-            else:
-                _LOGGER.error(
-                    "TX blocked can_id=0x%X module=%s mimo secure_can=false — sprawdź can_send",
-                    can_id,
-                    module_id,
-                )
+            _LOGGER.error("TX blocked can_id=0x%X module=%s — sprawdź can_send", can_id, module_id)
             return False
         import can
 
@@ -1101,15 +933,10 @@ class BusManager:
         """Send OTA_DATA frame (V3 frame_type 3) — payload is seq + firmware bytes."""
         if not self.ensure_bus():
             return False
-        self._sync_transport_macs_from_engine()
-        module_has_key = self._get_engine()._module_has_master_key_for_tx(int(module_id))  # noqa: SLF001
         frames = prepare_outgoing_frames(
-            self._transport,
             int(module_id),
             can_v2_ota_data_id(int(module_id)),
             data,
-            module_has_master_key=module_has_key,
-            secure_can=self._options.secure_can,
         )
         if not frames:
             return False
@@ -1171,27 +998,18 @@ class BusManager:
             _LOGGER.error("discovery_scan failed: %s", err, exc_info=True)
             self._last_scan_status = "error"
             return {"ok": False, "error": str(err)}
-        self._sync_transport_macs_from_engine()
         scan_at: float | None = None
         if result.get("ok"):
             try:
                 self.refresh_relay_telemetry(0.8)
             except Exception:  # noqa: BLE001
                 _LOGGER.debug("Post-scan relay telemetry failed", exc_info=True)
-            if self._options.secure_can and self._options.master_key_bytes is not None:
-                for rec in self._get_engine().list_modules():
-                    mid = int(rec["module_id"])
-                    try:
-                        _refresh_module_deep_impl(self, mid)
-                    except Exception:  # noqa: BLE001
-                        _LOGGER.debug("Deep refresh module %s failed", mid, exc_info=True)
-            elif not self._options.secure_can:
-                for rec in self._get_engine().list_modules():
-                    mid = int(rec["module_id"])
-                    try:
-                        _refresh_module_deep_impl(self, mid)
-                    except Exception:  # noqa: BLE001
-                        _LOGGER.debug("Deep refresh module %s failed", mid, exc_info=True)
+            for rec in self._get_engine().list_modules():
+                mid = int(rec["module_id"])
+                try:
+                    _refresh_module_deep_impl(self, mid)
+                except Exception:  # noqa: BLE001
+                    _LOGGER.debug("Deep refresh module %s failed", mid, exc_info=True)
             scan_at = time.time()
             try:
                 self.persist_discovery_state(last_scan_at=scan_at)

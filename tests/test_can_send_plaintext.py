@@ -1,4 +1,4 @@
-"""Tests for plaintext CONFIG TX when secure_can=false (V3 firmware)."""
+"""Tests for plaintext CONFIG TX (plain CAN V3 firmware, no secure-CAN transport)."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from protocol_constants import (  # noqa: E402
 )
 
 
-def test_plaintext_config_not_blocked_without_master_key():
+def test_plaintext_config_always_passed_through():
     module_id = 1
     can_id = can_v2_config_request_id(module_id)
     for command in (
@@ -32,42 +32,13 @@ def test_plaintext_config_not_blocked_without_master_key():
         COMMAND_GET_GPIO_VALUE,
     ):
         data = [module_id, command, 0, 0, 0, 0, 0, 0]
-        frames = prepare_outgoing_frames(
-            None,
-            module_id,
-            can_id,
-            data,
-            module_has_master_key=True,
-            secure_can=False,
-        )
+        frames = prepare_outgoing_frames(module_id, can_id, data)
         assert frames == [(can_id, data)]
 
 
-def test_secure_mode_blocks_unknown_config_without_transport():
+def test_short_payload_is_zero_padded_to_8_bytes():
     module_id = 2
     can_id = can_v2_config_request_id(module_id)
-    data = [module_id, COMMAND_GET_GPIO_VALUE, 7, 0, 0, 0, 0, 0]
-    frames = prepare_outgoing_frames(
-        None,
-        module_id,
-        can_id,
-        data,
-        module_has_master_key=True,
-        secure_can=True,
-    )
-    assert frames is None
-
-
-def test_secure_mode_allows_discovery_summary_without_transport():
-    module_id = 3
-    can_id = can_v2_config_request_id(module_id)
-    data = [module_id, COMMAND_GET_SUMMARY, 0, 0, 0, 0, 0, 0]
-    frames = prepare_outgoing_frames(
-        None,
-        module_id,
-        can_id,
-        data,
-        module_has_master_key=True,
-        secure_can=True,
-    )
-    assert frames == [(can_id, data)]
+    data = [module_id, COMMAND_GET_GPIO_VALUE, 7]
+    frames = prepare_outgoing_frames(module_id, can_id, data)
+    assert frames == [(can_id, [module_id, COMMAND_GET_GPIO_VALUE, 7, 0, 0, 0, 0, 0])]

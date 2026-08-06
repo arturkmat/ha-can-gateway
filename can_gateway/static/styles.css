@@ -8,14 +8,6 @@ body { max-width: 960px; margin: 0 auto; padding: 1rem 1.25rem calc(var(--footer
 h1 { font-size: 1.35rem; margin: 0 0 0.25rem; }
 h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
 .sub { color: #9aa0a6; font-size: 0.9rem; margin-bottom: 0.75rem; }
-.key-banner {
-  background: #fef3c7;
-  color: #92400e;
-  font-weight: 600;
-  padding: 0.55rem 0.75rem;
-  border-radius: 6px;
-  margin-bottom: 0.75rem;
-}
 .error-banner {
   background: #fee2e2;
   color: #991b1b;

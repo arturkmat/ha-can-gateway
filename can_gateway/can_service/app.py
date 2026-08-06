@@ -26,7 +26,6 @@ from .module_service import get_module_name, identify_module, set_module_id_by_m
 from .mqtt_bridge import MqttBridge
 from .options import load_options
 from .ota_upload_service import upload_firmware
-from .provision_service import get_master_key_state, get_provision_state, send_master_key_to_module
 from .sensor_scan_service import scan_1wire, scan_i2c, scan_mcp23017, scan_sensors
 from .shutter_config_service import clear_shutter, get_shutter_config, set_shutter_relays, set_shutter_times
 from .tab_load_service import load_module_tab
@@ -379,36 +378,6 @@ def create_app(bus: BusManager) -> web.Application:
         status = 200 if result.get("ok") else 503
         return web.json_response(result, status=status)
 
-    async def api_master_key_get(request: web.Request) -> web.Response:
-        try:
-            mid = int(request.match_info["module_id"])
-        except (KeyError, ValueError):
-            return _json_error("invalid module_id")
-        result = await asyncio.to_thread(get_master_key_state, bus, mid)
-        return web.json_response(result)
-
-    async def api_provision_state_get(request: web.Request) -> web.Response:
-        try:
-            mid = int(request.match_info["module_id"])
-        except (KeyError, ValueError):
-            return _json_error("invalid module_id")
-        result = await asyncio.to_thread(get_provision_state, bus, mid)
-        return web.json_response(result)
-
-    async def api_master_key_post(request: web.Request) -> web.Response:
-        try:
-            mid = int(request.match_info["module_id"])
-        except (KeyError, ValueError):
-            return _json_error("invalid module_id")
-        body = await request.json()
-        key_hex = str(body.get("master_key_hex", "")).strip()
-        if not key_hex:
-            opts = load_options()
-            key_hex = opts.master_key_hex.strip()
-        result = await asyncio.to_thread(send_master_key_to_module, bus, mid, key_hex)
-        status = 200 if result.get("ok") else 503
-        return web.json_response(result, status=status)
-
     async def api_shutter_config_get(request: web.Request) -> web.Response:
         try:
             mid = int(request.match_info["module_id"])
@@ -528,9 +497,6 @@ def create_app(bus: BusManager) -> web.Application:
     app.router.add_put("/api/modules/{module_id}/name", api_module_name_put)
     app.router.add_post("/api/modules/{module_id}/identify", api_module_identify)
     app.router.add_post("/api/modules/set-id-by-mac", api_set_module_id)
-    app.router.add_get("/api/modules/{module_id}/master-key", api_master_key_get)
-    app.router.add_post("/api/modules/{module_id}/master-key", api_master_key_post)
-    app.router.add_get("/api/modules/{module_id}/provision-state", api_provision_state_get)
     app.router.add_get("/api/modules/{module_id}/shutters/{shutter_no}/config", api_shutter_config_get)
     app.router.add_put("/api/modules/{module_id}/shutters/{shutter_no}/config", api_shutter_config_put)
     app.router.add_post("/api/modules/{module_id}/scan/{kind}", api_scan_sensor)
@@ -563,21 +529,12 @@ async def run_server(
     else:
         _LOGGER.info("Panel Ingress: static files from %s", STATIC_DIR)
 
-    scan_allowed = not options.secure_can or options.master_key_bytes is not None
-    if bus.bus_ok and scan_allowed:
-        if not options.secure_can:
-            _LOGGER.info("V3 plain CAN — skan startowy bez klucza")
+    if bus.bus_ok:
+        _LOGGER.info("V3 plain CAN — skan startowy")
         background.append(asyncio.create_task(_initial_scan(bus)))
-    elif bus.bus_ok and options.secure_can:
-        _LOGGER.warning(
-            "Pominięto skan startowy — secure_can=true wymaga poprawnego master_key_hex (64 znaki hex)"
-        )
-    if options.auto_scan and scan_allowed:
-        if not options.secure_can:
-            _LOGGER.info("V3 plain CAN — auto_scan bez klucza co %ds", options.auto_scan_interval_s)
+    if options.auto_scan:
+        _LOGGER.info("V3 plain CAN — auto_scan co %ds", options.auto_scan_interval_s)
         background.append(asyncio.create_task(_auto_scan_loop(bus, options.auto_scan_interval_s)))
-    elif options.auto_scan and options.secure_can:
-        _LOGGER.warning("auto_scan wyłączony — secure_can=true bez poprawnego master_key_hex")
     background.append(asyncio.create_task(_relay_telemetry_loop(bus)))
 
     try:
