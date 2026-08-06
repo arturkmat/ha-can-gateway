@@ -14,6 +14,7 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
+from unittest.mock import MagicMock
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICE = ROOT / "can_gateway" / "can_service"
@@ -163,6 +164,35 @@ def test_ensure_relay_metadata_populates_mcp_input_state_per_chip():
     bus.ensure_relay_metadata(121)
 
     assert rec.runtime.mcp_input_state == {"6": {"gpa": 5, "gpb": 0}}
+
+
+def test_module_detail_merges_mcp_input_state_for_engine_known_module():
+    """Regression: for a module the engine considers "live" (discovered or
+    has a context), module_detail() returned engine.export_module_dict(mid)
+    verbatim -- but that dict's "runtime" has no concept of MCP23017 input
+    register values at all (configurator_engine.py's ModuleContext only
+    tracks pin roles, not live gpa/gpb). So even after ensure_relay_metadata()
+    successfully read and stored mcp_input_state in this class's own
+    ModuleRecord, module_detail() (and therefore /api/entities, and therefore
+    the binary_sensor in HA) never saw it -- state stayed "unknown" forever
+    despite the bus read succeeding. module_detail() must merge it in."""
+    bus, rec = _make_bus_with_module(121, known_chip=6)
+    rec.runtime.mcp_input_state = {"6": {"gpa": 255, "gpb": 191}}
+
+    fake_engine = MagicMock()
+    fake_engine.discovered_modules = [{"module_id": 121}]
+    fake_engine._contexts = {}
+    fake_engine.export_module_dict.return_value = {
+        "module_id": 121,
+        "runtime": {"mcp_relay_pins": {"6": []}, "mcp_pin_roles": {"6": {"0": 3}}},
+    }
+    bus._get_engine = lambda: fake_engine
+
+    detail = bus.module_detail(121)
+
+    assert detail["runtime"]["mcp_input_state"] == {"6": {"gpa": 255, "gpb": 191}}
+    # untouched fields from the engine's own export must survive the merge
+    assert detail["runtime"]["mcp_relay_pins"] == {"6": []}
 
 
 def test_ensure_relay_metadata_leaves_state_untouched_on_error_status():

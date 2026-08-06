@@ -333,14 +333,33 @@ class BusManager:
                 return sorted(out, key=lambda r: r.get("module_id", 0))
             return [rec.to_dict() for rec in sorted(self._modules.values(), key=lambda r: r.module_id)]
 
+    def _with_mcp_input_state(self, out: dict[str, Any], mid: int) -> dict[str, Any]:
+        """engine.export_module_dict() (configurator_engine.py's own
+        ModuleContext) has no concept of live MCP23017 input register values
+        (gpa/gpb) -- it only tracks pin roles. The actual current values are
+        polled separately by this class's ensure_relay_metadata() and stored
+        in ModuleRecord.runtime.mcp_input_state. Merge that in here so
+        entity_export._mcp_pin_value() can resolve binary_sensor/sensor
+        states for MCP-wired buttons/inputs on modules the engine considers
+        "live" (discovered/has a context) -- without this, those entities
+        stay "unknown" forever even though the state was read correctly."""
+        with self._lock:
+            rec = self._modules.get(mid)
+            state = dict(rec.runtime.mcp_input_state) if rec is not None else {}
+        if state:
+            runtime = out.get("runtime")
+            if isinstance(runtime, dict):
+                runtime["mcp_input_state"] = state
+        return out
+
     def module_detail(self, module_id: int) -> dict[str, Any] | None:
         mid = int(module_id)
         engine = self._get_engine()
         for rec in engine.discovered_modules:
             if rec.get("module_id") == mid:
-                return engine.export_module_dict(mid)
+                return self._with_mcp_input_state(engine.export_module_dict(mid), mid)
         if mid in engine._contexts:  # noqa: SLF001
-            return engine.export_module_dict(mid)
+            return self._with_mcp_input_state(engine.export_module_dict(mid), mid)
         with self._lock:
             rec = self._modules.get(mid)
             if rec is None:

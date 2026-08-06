@@ -1,5 +1,17 @@
 # Changelog — ha-can-gateway
 
+## 2026-08-06 (add-on v5.0.27)
+
+### fix: poprawnie odczytany stan wejść MCP23017 nigdy nie docierał do /api/entities dla modułów "żywych" w silniku
+
+- **Objaw:** po V5.0.25+V5.0.26 logi pokazywały już PRAWIDŁOWY odczyt dla modułu 121: `MCP input response module=121 chip=6 raw=[121, 68, 0, 255, 191, 0, 0, 0]` (status=0, realne dane), a mimo to encje `binary_sensor.can_m121_mcp6_pin*` w HA dalej pokazywały `unknown`.
+- **Przyczyna:** `module_detail()` w `bus_manager.py` ma dwie ścieżki: dla modułu, który silnik `configurator_engine` uważa za "żywy" (jest w `discovered_modules` albo ma własny `_contexts[mid]` — a moduł 121 zawsze taki jest, bo regularnie się odzywa), zwraca `engine.export_module_dict(mid)` **w całości z pominięciem** `self._modules[mid].runtime` — czyli z pominięciem miejsca, w którym `ensure_relay_metadata()` zapisuje odczytany `mcp_input_state`. `ModuleContext` w `configurator_engine.py` ma osobny, równoległy mechanizm dla MCP23017, ale śledzi tylko **role pinów** (`mcp_pin_roles`/`mcp_relay_pins`), nie ma w ogóle pojęcia o **bieżącej wartości rejestrów** (gpa/gpb) — więc nawet poprawnie odczytany stan nie miał gdzie wylądować w odpowiedzi API.
+- **Fix:** `module_detail()` łączy teraz (`_with_mcp_input_state()`) wynik `engine.export_module_dict()` z `mcp_input_state` przechowywanym lokalnie w `self._modules[mid].runtime` — dla obu gałęzi uznających moduł za "żywy" w silniku. Ścieżka fallback (moduł nieznany silnikowi) już wcześniej działała poprawnie, bo korzysta bezpośrednio z `ModuleRecord.to_dict(include_runtime=True)`.
+- **Testy:** nowy `test_module_detail_merges_mcp_input_state_for_engine_known_module` — symuluje silnik zwracający `runtime` bez `mcp_input_state` i weryfikuje że po scaleniu dane z `ensure_relay_metadata()` są widoczne, z zachowaniem pozostałych pól z silnika. 62/62 przechodzi.
+- **Ubocznie:** to wyjaśnia też dlaczego problem wyglądał na "naprawiony w logach, ale dalej zepsuty w HA" — odczyt z magistrali był od V5.0.26 poprawny, ale ginął jeden poziom wyżej, między odczytem a zbudowaniem katalogu encji.
+
+
+
 ## 2026-08-06 (add-on v5.0.26)
 
 ### fix: skan MCP23017 permanentnie gubił chip modułu po każdym restarcie dodatku (regresja z "Limit MCP role scan to reported chips")
