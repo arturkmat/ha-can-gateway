@@ -327,7 +327,11 @@ class BusManager:
         store = discovery_snapshot(scan_status=self._last_scan_status)
         catalog = list(store.get("entities") or [])
         if live_values and self.bus_ok and catalog:
-            modules = self._export_modules_for_catalog()
+            # V5.0.11 FIX: Use persisted modules (all 15), not just live modules (10).
+            # Entities endpoint was filtering to only live modules, causing modules 12, 101-104, 121
+            # to vanish when CAN bus only has 10 modules connected. Instead, use all persisted modules
+            # and update values from live engine.
+            modules = store.get("modules", [])
             if modules:
                 live_entities = self._build_entity_catalog(modules)
                 catalog = self._merge_live_entity_values(catalog, live_entities)
