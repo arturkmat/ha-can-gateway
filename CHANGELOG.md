@@ -1,5 +1,16 @@
 # Changelog — ha-can-gateway
 
+## 2026-08-06 (add-on v5.0.29)
+
+### fix: binarne wejścia MCP23017 miały odwróconą logikę (True/False zamienione)
+
+- **Objaw:** po V5.0.28 encje `binary_sensor.can_m121_mcp6_pin*` w końcu pokazywały realne wartości zamiast "unknown" — ale wszystkie odwrotnie: piny w spoczynku (nienaciśnięte/nieaktywne) pokazywały się jako `on`, a aktywne jako `off`.
+- **Przyczyna:** `_mcp_pin_value()` w `entity_export.py` zwracał surowy bit z rejestru GPA/GPB (`bool(register & (1 << bit))`) bez uwzględnienia okablowania active-low z podciąganiem (pull-up) — stan spoczynkowy trzyma linię w stanie wysokim (bit=1), zadziałanie ściąga ją do zera (bit=0). Zwykłe GPIO (nie-MCP) nie miało tego problemu, bo firmware wysyła tam już przetworzoną wartość `logical` — dla rejestrów MCP23017 dostajemy surowy odczyt sprzętowy i inwersję trzeba zrobić samodzielnie.
+- **Fix:** `_mcp_pin_value()` zwraca teraz zanegowany bit (`not bool(...)`) — bit=1 (spoczynek) → `False`/off, bit=0 (aktywne) → `True`/on. Dotyczy obu ról korzystających z tej funkcji: przycisków MCP (`role_code=2`, platforma `sensor`) i zwykłych wejść binarnych MCP (`role_code=3`, platforma `binary_sensor`).
+- **Testy:** nowy `test_build_entities_mcp_binary_pin_value_is_active_low` w `tests/test_entity_export.py` — weryfikuje inwersję dla obu bajtów rejestru (GPA i GPB). 62/62 przechodzi.
+
+
+
 ## 2026-08-06 (add-on + integration v5.0.28)
 
 ### fix: docelowa naprawa "unknown" na binary_sensor MCP23017 modułu 121 — dwa równoległe mechanizmy skanu MCP walczyły o tę samą magistralę

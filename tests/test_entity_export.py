@@ -189,6 +189,24 @@ def test_build_entities_mcp_relay_from_role_dump():
     assert "m5_mcp_chip0_pin1_binary" not in uids
 
 
+def test_build_entities_mcp_binary_pin_value_is_active_low():
+    """MCP23017 inputs here are wired active-low with internal pull-ups:
+    idle/not-triggered reads register bit=1, active/triggered reads bit=0.
+    The exported binary_sensor value must be the inverse of the raw bit --
+    True (active) only when the bit is 0."""
+    mod = {
+        "module_id": 121,
+        "runtime": {
+            "hw_flags": 0x08,
+            "mcp_pin_roles": {"6": {"0": 3, "14": 3}},
+            "mcp_input_state": {"6": {"gpa": 0b00000001, "gpb": 0b00000000}},  # pin0 bit=1 (idle), pin14 bit=0 (active)
+        },
+    }
+    entities = {e["unique_id"]: e for e in build_entities_for_module(mod)}
+    assert entities["m121_mcp_chip6_pin0_binary"]["value"] is False  # raw bit=1 -> idle -> off
+    assert entities["m121_mcp_chip6_pin14_binary"]["value"] is True  # raw bit=0 -> active -> on
+
+
 def test_build_entities_unused_mcp_pins_not_exported():
     mod = {
         "module_id": 5,

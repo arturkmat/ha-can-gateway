@@ -590,7 +590,14 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
             return None
         register = int(state.get("gpa", 0)) if int(local_pin) < 8 else int(state.get("gpb", 0))
         bit = int(local_pin) if int(local_pin) < 8 else int(local_pin) - 8
-        return bool(register & (1 << bit))
+        # MCP23017 inputs here are wired active-low with internal pull-ups
+        # (idle/not-pressed reads HIGH=1, pressed/active pulls the line
+        # LOW=0) -- the raw register bit is the inverse of the "on" state we
+        # want to report (matches the firmware's own GPIO "logical" value,
+        # which is already pre-inverted before it reaches gpio_values; the
+        # MCP23017 register read here is raw hardware level, so we invert it
+        # ourselves).
+        return not bool(register & (1 << bit))
 
     for chip_off, roles in sorted(mcp_pin_roles.items()):
         for local_pin, role_code in sorted(roles.items()):
