@@ -1,5 +1,21 @@
 # Changelog — ha-can-gateway
 
+## 2026-08-06 (add-on v5.0.11–v5.0.14)
+
+### fix: brakujące moduły/encje w HA (10 zamiast 15 urządzeń) + przyciski pulse-relay nigdy nie tworzone
+
+- **BUG #11 — `bus_manager.entities_catalog()` (add-on):** `/api/entities` budował katalog wyłącznie z modułów aktualnie widocznych na CAN (`_export_modules_for_catalog()`), zamiast ze wszystkich perystentnych modułów z dysku. Moduły rzadziej się zgłaszające (12, 101–104, 121) wypadały z katalogu mimo poprawnego zapisu w `/data/modules.json`. Naprawione: użycie `discovery_snapshot()["modules"]` (wszystkie perystentne moduły) do budowy live-values, zamiast tylko live-modułów.
+- **BUG #12 — `custom_components/can_gateway_v3/switch.py` (integracja), KRYTYCZNY:** pozostawiony kod debugowy (`desc.get("binding_type", ...)`) zakładał że `desc` to `dict`, podczas gdy to `EntityDescription` (dataclass) — rzucał `AttributeError` przy pierwszym switchu w kolejności przetwarzania. Wyjątek **przerywał całą pętlę** `apply_addon_entities()`, więc wszystkie encje po tym punkcie (moduły 9+, w tym 12, 101–104, 121) nigdy nie trafiały do coordinatora. Błąd był po cichu łapany (`except Exception: _LOGGER.debug(...)`), niewidoczny bez debug loggingu.
+- **BUG #13 — `custom_components/can_gateway_v3/button.py`:** platforma `button` nigdy nie rejestrowała `platform_adder` dla dynamicznego katalogu z dodatku — obsługiwała wyłącznie statyczne przyciski Gateway (scan/reboot). Encje `platform="button"` eksportowane przez dodatek dla przekaźników z `pulse_ms > 0` (`..._pulse`) nie miały gdzie trafić. Nie była to regresja — funkcja nigdy nie została dokończona od czasu wprowadzenia integracji.
+- **BUG #14 — `custom_components/can_gateway_v3/coordinator.py`:** `platform_adders` (dict z prekonfigurowanymi kluczami platform) nie miał klucza `"button"` — `register_platform_adder("button", ...)` rzucał `KeyError`, co uniemożliwiało setup nowo dodanej obsługi z BUG #13.
+- **Weryfikacja on-site:** 166 encji / 16 urządzeń (gateway + 15 modułów, w tym 12, 101, 102, 103, 104, 121), zero tracebacków po naprawie.
+
+### chore: integracja usunięta z HACS
+
+- Integracja `can_gateway_v3` **nie jest już dystrybuowana przez HACS**. Jedyna wspierana ścieżka instalacji: auto-deploy przez dodatek Supervisor (`can_gateway/deploy_integration.sh`) lub ręczna kopia `custom_components/can_gateway_v3/` do `/config/custom_components/`.
+- Powód: instalacja przez HACS równolegle z auto-deployem dodatku powodowała, że dwa niezależne mechanizmy nadpisywały ten sam folder `/config/custom_components/can_gateway_v3/` niezsynchronizowanymi wersjami (obserwowane realnie: integracja pokazywała starszą wersję niż dodatek, HACS dodatkowo generował błędy 404 próbując pobrać commit hash jako nazwę brancha).
+- README.md i `can_gateway/README.md` zaktualizowane — usunięte instrukcje instalacji przez HACS, zachowana wyłącznie ścieżka ręcznej kopii dla trybu bez Supervisor.
+
 ## 2026-07-07 (add-on v0.7.5 + integration v3.5.5)
 
 ### fix: cover STOP button — state sync and command validation

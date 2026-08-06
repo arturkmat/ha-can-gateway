@@ -14,9 +14,7 @@ Jedno repozytorium dla całego stacku Home Assistant CAN Gateway:
 
 | `can_gateway/integration/can_gateway_v3/` | Integracja bundlowana w dodatku (auto-deploy przy starcie) |
 
-| `custom_components/can_gateway_v3/` | Ta sama integracja w korzeniu — **HACS** i ręczna instalacja |
-
-| `hacs.json` | Manifest HACS (integracja z tego repo) |
+| `custom_components/can_gateway_v3/` | Ta sama integracja w korzeniu repo — źródło, z którego dodatek kopiuje pliki |
 
 | `repository.yaml` | Manifest sklepu dodatków Supervisor |
 
@@ -148,19 +146,23 @@ Sensor **Gateway Last Scan** w integracji pokazuje `waiting`, dopóki dodatek ni
 
 
 
-## Instalacja integracji (HACS / direct serial)
+## Instalacja integracji bez Supervisor (direct serial)
 
 
 
-Bez Supervisor lub gdy chcesz tylko integrację (port SLCAN w HA Core):
+Bez Supervisor lub gdy chcesz tylko integrację (port SLCAN w HA Core, bez dodatku):
 
 
 
-1. **HACS → Integracje → ⋮ → Własne repozytoria** → URL: `https://github.com/arturkmat/ha-can-gateway`
+1. Skopiuj ręcznie `custom_components/can_gateway_v3/` z tego repo do `/config/custom_components/can_gateway_v3/` na Twojej instancji HA.
 
-2. Pobierz **CAN Gateway v3**, zrestartuj HA.
+2. Zrestartuj HA.
 
 3. **Dodaj integrację → CAN Gateway v3** — tryb **direct serial** (integracja otwiera port) lub **add-on** (jeśli dodatek działa).
+
+
+
+Integracja **nie jest** dystrybuowana przez HACS — jedyne wspierane źródło instalacji to dodatek Supervisor (auto-deploy) albo ręczna kopia plików powyżej. Instalacja przez HACS prowadziła do konfliktu wersji między kopią HACS a kopią wdrażaną przez dodatek (ten sam folder `/config/custom_components/can_gateway_v3/` nadpisywany przez dwa niezależne mechanizmy).
 
 
 
