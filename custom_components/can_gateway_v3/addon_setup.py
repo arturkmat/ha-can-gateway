@@ -256,8 +256,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             else {"entities": []}
         )
         catalog_ready = await _apply_catalog(initial_discovery, entities_payload)
-        if catalog_ready:
-            await _reload_platforms()
     except Exception:  # noqa: BLE001
         _LOGGER.debug("Initial add-on catalog load failed", exc_info=True)
         coordinator.mark_scan_finished("waiting", WAITING_FOR_SCAN_DETAILS)
