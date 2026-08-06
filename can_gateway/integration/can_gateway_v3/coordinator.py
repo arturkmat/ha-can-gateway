@@ -397,6 +397,24 @@ class CanGatewayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return False
         return bool(value) if value is not None else default
 
+    def pulse_binary_sensor(
+        self, unique_id: str, attributes: dict[str, Any] | None = None, duration: float = 0.75
+    ) -> None:
+        """Emit a short virtual pulse for a mapped binary sensor entity."""
+        if unique_id not in self.entity_descriptions:
+            return
+        attrs = dict(attributes or {})
+        previous_handle = self._button_reset_handles.pop(unique_id, None)
+        if previous_handle is not None:
+            previous_handle.cancel()
+        self._set_state(unique_id, True, attrs)
+
+        def _reset() -> None:
+            self._button_reset_handles.pop(unique_id, None)
+            self._set_state(unique_id, False, attrs)
+
+        self._button_reset_handles[unique_id] = self.hass.loop.call_later(duration, _reset)
+
     def _update_button(self, payload: dict[str, Any]) -> None:
         module_id = payload.get("module_id")
         button_no = payload.get("button_no")

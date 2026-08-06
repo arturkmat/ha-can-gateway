@@ -31,6 +31,20 @@ SENSOR_TYPE_NAMES = {
 }
 
 
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "on", "yes", "high", "pressed", "active"}:
+            return True
+        if normalized in {"0", "false", "off", "no", "low", "released", "inactive", "unknown", "none", "null", ""}:
+            return False
+    return bool(value) if value is not None else default
+
+
 def _int_dict(raw: Any) -> dict[int, int]:
     out: dict[int, int] = {}
     if not isinstance(raw, dict):
@@ -686,7 +700,7 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
     for gpio_key, info in gpio_values.items():
         if not isinstance(info, dict):
             continue
-        if not info.get("valid", True):
+        if not _coerce_bool(info.get("valid", True), default=True):
             continue
         gpio = int(info.get("gpio", gpio_key))
         role_name = str(info.get("role_name") or "")
@@ -701,7 +715,7 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
                 unique_id=uid,
                 name=f"CAN M{module_id} GPIO {gpio}",
                 module_id=module_id,
-                value=bool(info.get("logical", 0)),
+                value=_coerce_bool(info.get("logical", 0)),
                 attributes={
                     "module_id": module_id,
                     "gpio": gpio,

@@ -91,6 +91,15 @@ class CanGatewayPulseButton(ButtonEntity):
             False,
             False,
         )
+        if self._desc.module_id == 103 and int(relay_no) == 23:
+            self._coordinator.pulse_binary_sensor(
+                "m201_gpio120_binary",
+                {
+                    "module_id": 201,
+                    "gpio": 120,
+                    "mapped_from": self._attr_unique_id,
+                },
+            )
 
     @property
     def extra_state_attributes(self):
