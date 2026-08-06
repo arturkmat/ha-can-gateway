@@ -375,6 +375,14 @@ class BusManager:
             return
         self.collect_relay_state_frames(timeout_s)
 
+    def refresh_mcp_input_states(self) -> None:
+        """Active refresh of MCP23017 input register values -- see
+        ConfiguratorEngine.refresh_mcp_input_states for why this can't be
+        passive like relay/shutter telemetry (no broadcast exists)."""
+        if not self.bus_ok:
+            return
+        self._get_engine().refresh_mcp_input_states()
+
     def _relay_controls_from_record(self, rec: ModuleRecord) -> list[dict[str, Any]]:
         reserved: set[int] = set()
         for ro, rc in rec.runtime.shutter_map.values():

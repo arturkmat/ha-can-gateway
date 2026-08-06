@@ -855,6 +855,43 @@ class ConfiguratorEngine:
             return 0
         return int(resp[3]) if len(resp) > 3 else 0
 
+    def refresh_mcp_input_states(self) -> None:
+        """Poll live MCP23017 register values for every module with a known
+        expander chip. Unlike relay/shutter state, there is no broadcast
+        telemetry for MCP23017 inputs (TELE_GPIO_VALUE is a documented no-op
+        in _apply_state_telemetry, and no TELE_MCP23017_INPUT type exists at
+        all) -- the value is only ever obtained by actively sending
+        COMMAND_GET_MCP23017_INPUT_STATE. read_gpio_roles_from_module() does
+        that once during a full discovery/deep-refresh pass, which otherwise
+        only runs at add-on startup or when a scan is explicitly triggered --
+        so without this, mcp_input_state (and every binary_sensor/button
+        resolved from it) stays frozen at whatever it read once, never
+        reflecting real button presses or sensor changes. Call this
+        periodically (e.g. from the add-on's auto-scan loop) to keep it live.
+        """
+        if not self._io.bus_ok():
+            return
+        for mid, ctx in list(self._contexts.items()):
+            if ctx.mcp_pin_roles:
+                chips = sorted(ctx.mcp_pin_roles.keys())
+            elif ctx.mcp23017_found_mask:
+                chips = [i for i in range(8) if ctx.mcp23017_found_mask & (1 << i)]
+            else:
+                continue
+            changed = False
+            for chip in chips:
+                resp = self.send_request(
+                    mid, COMMAND_GET_MCP23017_INPUT_STATE, [chip], timeout=0.25, log_traffic=False
+                )
+                if resp is None or len(resp) < 5 or resp[2] != 0:
+                    continue
+                new_state = {"gpa": int(resp[3]), "gpb": int(resp[4])}
+                if ctx.mcp_input_state.get(chip) != new_state:
+                    ctx.mcp_input_state[chip] = new_state
+                    changed = True
+            if changed:
+                self._io.notify()
+
     @staticmethod
     def build_summary_details(response: list[int]) -> str:
         shutters = response[6] if len(response) > 6 else 0

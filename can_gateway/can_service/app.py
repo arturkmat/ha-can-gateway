@@ -570,6 +570,7 @@ async def _auto_scan_loop(bus: BusManager, interval_s: int) -> None:
             if bus.bus_ok:
                 await asyncio.to_thread(bus.auto_scan_broadcast)
                 await asyncio.to_thread(bus.refresh_relay_telemetry, 0.6)
+                await asyncio.to_thread(bus.refresh_mcp_input_states)
         except Exception:  # noqa: BLE001
             _LOGGER.debug("auto-scan broadcast failed", exc_info=True)
         await asyncio.sleep(max(5, interval_s))

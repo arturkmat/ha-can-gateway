@@ -1,5 +1,16 @@
 # Changelog — ha-can-gateway
 
+## 2026-08-06 (add-on v5.0.30)
+
+### fix: stan wejść MCP23017 był zamrożony na stałe — brak cyklicznego odświeżania (nie żyje jak przekaźniki/rolety)
+
+- **Objaw:** po V5.0.28/29 encje MCP pokazywały poprawną logikę (bez "unknown", bez odwrócenia), ale wartości nie zmieniały się w czasie mimo realnych zmian na wejściach — użytkownik: "nie są realne wartości".
+- **Przyczyna:** dla stanu przekaźników/rolet firmware wysyła cykliczną telemetrię broadcast (`TELE_RELAY_STATE`/`TELE_SHUTTER_STATUS`), nasłuchiwaną co ~10-20s przez `_auto_scan_loop`/`_relay_telemetry_loop` w `app.py` — dlatego te wartości są żywe. Dla MCP23017 **nie ma odpowiednika**: `TELE_GPIO_VALUE` jest udokumentowanym no-opem w `_apply_state_telemetry()` (`return False`), a `TELE_MCP23017_INPUT` w ogóle nie istnieje w protokole. Jedyny sposób odczytu to aktywne wysłanie `COMMAND_GET_MCP23017_INPUT_STATE` — a to działo się **wyłącznie raz**, podczas pełnego skanu discovery (start dodatku albo ręczny skan z panelu), nigdy cyklicznie.
+- **Fix:** nowa metoda `ConfiguratorEngine.refresh_mcp_input_states()` — lekki odczyt `COMMAND_GET_MCP23017_INPUT_STATE` per znany chip dla każdego już odkrytego modułu z ekspanderem (bez ponownego skanu ról/found_mask, więc tani), z `notify()` tylko gdy wartość faktycznie się zmieniła. Wywoływana z `_auto_scan_loop` w `app.py`, więc odświeża się razem z telemetrią przekaźników (co `auto_scan_interval_s`, domyślnie ~10s).
+- **Testy:** `tests/test_mcp_input_state.py` — 2 nowe testy: cykliczny odczyt aktualizuje kontekst i wywołuje `notify()` tylko przy realnej zmianie, moduły bez znanego chipa MCP są pomijane (zero zbędnego ruchu na magistrali). 64/64 przechodzi.
+
+
+
 ## 2026-08-06 (add-on v5.0.29)
 
 ### fix: binarne wejścia MCP23017 miały odwróconą logikę (True/False zamienione)

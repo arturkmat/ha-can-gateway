@@ -130,6 +130,42 @@ def test_read_gpio_roles_skips_chip_on_error_status():
     assert ctx.mcp_input_state == {6: {"gpa": 5, "gpb": 0}}
 
 
+def test_refresh_mcp_input_states_polls_known_chips_and_updates_context():
+    """Regression: mcp_input_state was only ever populated once, during the
+    full discovery/deep-refresh pass (startup or an explicit manual scan) --
+    there is no broadcast telemetry for MCP23017 inputs (unlike relay/shutter
+    state), so button presses / sensor changes after that never showed up.
+    refresh_mcp_input_states() must be callable on its own, independent of a
+    full deep-refresh, and must update already-discovered modules' context."""
+    ce, engine, ctx = _make_engine_with_mcp_module(121)
+    ctx.mcp_pin_roles = {6: {0: 3, 14: 3}}  # already discovered: chip 6 has pins wired
+    ctx.mcp_input_state = {6: {"gpa": 255, "gpb": 191}}  # stale value from the last full scan
+
+    def fake_send_request(target_id, command, args=None, *, timeout=1.0, log_traffic=True, bypass_config_lock=False):
+        assert command == ce.COMMAND_GET_MCP23017_INPUT_STATE
+        assert target_id == 121
+        assert args == [6]
+        return [121, 68, 0, 0, 0, 0, 0, 0]  # a button is now pressed: gpa/gpb both 0
+
+    engine.send_request = fake_send_request
+    notified = []
+    engine._io.notify = lambda: notified.append(True)
+
+    engine.refresh_mcp_input_states()
+
+    assert ctx.mcp_input_state == {6: {"gpa": 0, "gpb": 0}}
+    assert notified, "notify() must fire when the polled state actually changed"
+
+
+def test_refresh_mcp_input_states_skips_modules_without_mcp_chip():
+    ce, engine, ctx = _make_engine_with_mcp_module(9)
+    ctx.mcp_pin_roles = {}
+    ctx.mcp23017_found_mask = 0  # module 9 has no expander
+
+    engine.send_request = MagicMock(side_effect=AssertionError("should not poll a module with no known MCP chip"))
+    engine.refresh_mcp_input_states()  # must not raise
+
+
 def test_export_module_dict_includes_mcp_input_state():
     """This is what module_detail()/api/entities ultimately reads -- without
     it in the exported runtime dict, entity_export._mcp_pin_value() has
