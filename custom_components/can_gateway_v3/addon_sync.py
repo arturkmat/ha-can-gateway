@@ -191,7 +191,10 @@ def apply_addon_entities(coordinator: CanGatewayCoordinator, entities: list[Any]
         attrs = raw.get("attributes")
         if not isinstance(attrs, dict):
             attrs = {}
-        coordinator._set_state(uid, raw.get("value"), attrs)
+        value = raw.get("value")
+        if platform == "binary_sensor":
+            value = _coerce_binary_state(value)
+        coordinator._set_state(uid, value, attrs)
 
     removed = set(coordinator.entity_descriptions.keys()) - incoming_uids
     if removed:
@@ -248,4 +251,7 @@ def apply_addon_entity_values(
         attrs = raw.get("attributes")
         if not isinstance(attrs, dict):
             attrs = {}
-        coordinator._set_state(uid, raw.get("value"), attrs)
+        value = raw.get("value")
+        if coordinator.entity_descriptions[uid].platform == "binary_sensor":
+            value = _coerce_binary_state(value)
+        coordinator._set_state(uid, value, attrs)
