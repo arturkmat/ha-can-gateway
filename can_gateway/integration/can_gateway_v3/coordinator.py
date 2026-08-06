@@ -108,6 +108,7 @@ class CanGatewayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._pending_relay_link_index: dict[int, int] = {}
         self._pending_relay_bind_route_index: dict[int, int] = {}
         self._pending_led_binding_index: dict[int, int] = {}
+        self._button_reset_handles: dict[str, Any] = {}
 
     async def _async_update_data(self) -> dict[str, Any]:
         return self.snapshot()
@@ -382,6 +383,20 @@ class CanGatewayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             self._set_state(uid, payload["pressure_pa"], common_attrs)
 
+    @staticmethod
+    def _coerce_bool(value: Any, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "on", "yes", "high", "pressed", "active"}:
+                return True
+            if normalized in {"0", "false", "off", "no", "low", "released", "inactive", "unknown", "none", "null", ""}:
+                return False
+        return bool(value) if value is not None else default
+
     def _update_button(self, payload: dict[str, Any]) -> None:
         module_id = payload.get("module_id")
         button_no = payload.get("button_no")
@@ -422,19 +437,25 @@ class CanGatewayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 icon="mdi:gesture-tap-button",
             )
         )
-        self._set_state(
-            btn_bin_uid,
-            True,
-            {
-                "module_id": module_id,
-                "button_no": button_no,
-                "action": payload.get("action"),
-                "action_code": payload.get("action_code"),
-            },
-        )
+        button_attrs = {
+            "module_id": module_id,
+            "button_no": button_no,
+            "action": payload.get("action"),
+            "action_code": payload.get("action_code"),
+        }
+        previous_handle = self._button_reset_handles.pop(btn_bin_uid, None)
+        if previous_handle is not None:
+            previous_handle.cancel()
+        self._set_state(btn_bin_uid, True, button_attrs)
+
+        def _reset_button() -> None:
+            self._button_reset_handles.pop(btn_bin_uid, None)
+            self._set_state(btn_bin_uid, False, button_attrs)
+
+        self._button_reset_handles[btn_bin_uid] = self.hass.loop.call_later(0.75, _reset_button)
 
     def _update_gpio(self, payload: dict[str, Any]) -> None:
-        if payload.get("valid") != 1:
+        if not self._coerce_bool(payload.get("valid")):
             return
         module_id = payload.get("module_id")
         gpio = payload.get("gpio")
@@ -454,7 +475,7 @@ class CanGatewayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._set_state(
             uid,
-            bool(payload.get("logical", 0)),
+            self._coerce_bool(payload.get("logical", 0)),
             {
                 "module_id": module_id,
                 "gpio": gpio,
@@ -1217,6 +1238,9 @@ class CanGatewayCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def clear_all_entities(self) -> None:
         """Purge all cached entities/states/metadata (call before reload)."""
+        for handle in self._button_reset_handles.values():
+            handle.cancel()
+        self._button_reset_handles.clear()
         self.entity_descriptions.clear()
         self.entity_states.clear()
         self.module_info.clear()

@@ -52,7 +52,20 @@ class CanGatewayBinarySensor(BinarySensorEntity):
     @property
     def is_on(self):
         state = self._coordinator.get_state(self._attr_unique_id)
-        return None if state is None else bool(state.value)
+        value = None if state is None else state.value
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "on", "yes", "high", "pressed", "active"}:
+                return True
+            if normalized in {"0", "false", "off", "no", "low", "released", "inactive", "unknown", "none", "null", ""}:
+                return False
+        return bool(value)
 
     @property
     def extra_state_attributes(self):

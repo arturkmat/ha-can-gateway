@@ -49,6 +49,21 @@ def _int_or_none(value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
 
+def _coerce_binary_state(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "on", "yes", "high", "pressed", "active"}:
+            return True
+        if normalized in {"0", "false", "off", "no", "low", "released", "inactive", "unknown", "none", "null", ""}:
+            return False
+    return bool(value)
+
 
 def _apply_summary_counts(info, mod: dict[str, Any]) -> None:
     if mod.get("button_count") is not None:
