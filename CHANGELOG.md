@@ -1,5 +1,14 @@
 # Changelog — ha-can-gateway
 
+## 2026-08-06 (add-on v5.0.17)
+
+### refactor: usunięcie mostu MQTT
+
+- Usunięty `can_service/mqtt_bridge.py` (cały plik) oraz jego inicjalizacja w `app.run_server()` (`mqtt.start()`/`mqtt.stop()`). Pole `mqtt_enabled` usunięte z `BusManager.status()`.
+- Usunięte pola `AddonOptions.mqtt_*` (7 pól) i sekcja `mqtt` z `config.yaml` (options/schema) — zostają tylko `connectivity` i `auto_scan`.
+- Usunięta zależność `paho-mqtt` z Dockerfile. Przy okazji usunięta też `cryptography` — zapomniana martwa zależność z V5.0.16 (była tylko dla usuniętego wtedy `can_secure_transport.py`/`can_provisioner.py`, nic jej już nie importuje).
+- **Testy:** 53/53 przechodzi bez zmian (MQTT nie miał testów jednostkowych).
+
 ## 2026-08-06 (add-on v5.0.16)
 
 ### refactor: usunięcie gs_usb i secure_can/MASTER_KEY, grupowanie opcji dodatku

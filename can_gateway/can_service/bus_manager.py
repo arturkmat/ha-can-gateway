@@ -160,7 +160,6 @@ class BusManager:
                 "last_scan_status": self._last_scan_status,
                 "last_scan_at": self._last_scan_at,
                 "version": "0.7.2",
-                "mqtt_enabled": self._options.mqtt_enabled,
             }
 
     def _export_modules_for_catalog(self) -> list[dict[str, Any]]:

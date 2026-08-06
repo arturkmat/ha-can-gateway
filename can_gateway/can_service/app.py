@@ -23,7 +23,6 @@ from .gpio_service import (
 from .mapping_service import read_all_mappings
 from .mapping_write_service import clear_mappings, send_mappings
 from .module_service import get_module_name, identify_module, set_module_id_by_mac, set_module_name
-from .mqtt_bridge import MqttBridge
 from .options import load_options
 from .ota_upload_service import upload_firmware
 from .sensor_scan_service import scan_1wire, scan_i2c, scan_mcp23017, scan_sensors
@@ -520,9 +519,6 @@ async def run_server(
     await site.start()
     _LOGGER.info("HTTP listening on %s:%d (Ingress port)", host, port)
 
-    mqtt = MqttBridge(bus, options)
-    await mqtt.start()
-
     background: list[asyncio.Task] = []
     if not STATIC_DIR.joinpath("index.html").is_file():
         _LOGGER.warning("Panel Ingress: brak %s/index.html", STATIC_DIR)
@@ -551,7 +547,6 @@ async def run_server(
                 await task
             except asyncio.CancelledError:
                 pass
-        await mqtt.stop()
         await runner.cleanup()
 
 

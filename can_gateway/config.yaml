@@ -1,5 +1,5 @@
 name: CAN Gateway
-version: "5.0.16"
+version: "5.0.17"
 slug: can_gateway
 description: CAN bus gateway (SLCAN), web panel, REST API and auto-setup of can_gateway_v3 integration.
 url: https://github.com/arturkmat/ha-can-gateway
@@ -37,14 +37,6 @@ options:
   auto_scan:
     enabled: true
     interval_s: 10
-  mqtt:
-    enabled: false
-    host: core-mosquitto
-    port: 1883
-    username: ""
-    password: ""
-    topic_prefix: can_gateway
-    interval_s: 5
 schema:
   connectivity:
     can_interface: list(slcan)
@@ -54,11 +46,3 @@ schema:
   auto_scan:
     enabled: bool
     interval_s: int(5,120)
-  mqtt:
-    enabled: bool
-    host: str
-    port: port
-    username: str
-    password: password
-    topic_prefix: str
-    interval_s: int(2,60)
