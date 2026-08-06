@@ -16,7 +16,8 @@ from .const import (
     DOMAIN,
     GATEWAY_DEVICE_ID,
 )
-from .device_helpers import gateway_device_info
+from .coordinator import EntityDescription
+from .device_helpers import gateway_device_info, module_device_info
 from .entity_helpers import get_can_sender, get_coordinator
 from .led_protocol import MAX_LED_STRIPS
 from .protocol import (
@@ -45,6 +46,60 @@ async def async_setup_entry(
             GatewayRebootButton(coordinator, can_send),
         ]
     )
+
+    # V5.0.13 FIX: Dynamic catalog buttons from add-on (pulse relays) were never
+    # created — this platform only exported static Gateway buttons. Add-on exports
+    # entities with platform="button" for relays configured with pulse_ms > 0
+    # (unique_id "..._pulse"); nothing ever registered a platform adder for them.
+    dynamic_entities: dict[str, CanGatewayPulseButton] = {}
+
+    def _add(descriptions: list[EntityDescription]) -> None:
+        new_entities: list[CanGatewayPulseButton] = []
+        for desc in descriptions:
+            if desc.unique_id in dynamic_entities:
+                continue
+            ent = CanGatewayPulseButton(coordinator, can_send, desc)
+            dynamic_entities[desc.unique_id] = ent
+            new_entities.append(ent)
+        if new_entities:
+            async_add_entities(new_entities)
+
+    entry.async_on_unload(coordinator.register_platform_adder("button", _add))
+
+
+class CanGatewayPulseButton(ButtonEntity):
+    """Dynamic pulse-relay button sourced from the add-on entity catalog."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator, can_send, desc: EntityDescription) -> None:
+        self._coordinator = coordinator
+        self._can_send = can_send
+        self._desc = desc
+        self._attr_unique_id = desc.unique_id
+        self._attr_name = desc.name
+        self._attr_icon = desc.icon
+
+    async def async_press(self) -> None:
+        state = self._coordinator.get_state(self._attr_unique_id)
+        relay_no = None if state is None else state.attributes.get("relay_no")
+        if relay_no is None:
+            return
+        await self._can_send(
+            can_v2_config_request_id(self._desc.module_id),
+            [self._desc.module_id, 59, int(relay_no), 1, 0, 0, 0, 0],
+            False,
+            False,
+        )
+
+    @property
+    def extra_state_attributes(self):
+        state = self._coordinator.get_state(self._attr_unique_id)
+        return {} if state is None else dict(state.attributes)
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return module_device_info(self._coordinator, self._desc.module_id)
 
 
 class GatewayBaseButton(ButtonEntity):

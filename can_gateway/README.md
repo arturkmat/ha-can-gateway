@@ -19,7 +19,7 @@ Optional: open the Ingress panel and run **Scan bus** to populate `/data/modules
 
 ## Manual integration setup
 
-If you run Home Assistant without Supervisor, manually copy `custom_components/can_gateway_v3` from the same repo root into `/config/custom_components/` and add the integration manually (direct serial or remote add-on URL). This integration is **not** distributed via HACS — installing through both HACS and the add-on's auto-deploy at the same time caused version conflicts on the same `/config/custom_components/can_gateway_v3/` folder.
+The integration works **exclusively** in add-on mode — it talks to this add-on's REST API and has no standalone/direct-serial mode. If the add-on's auto-deploy (`deploy_integration.sh`) did not run for some reason, manually copy `custom_components/can_gateway_v3` from the same repo root into `/config/custom_components/`, restart HA, and add the integration — it still requires the add-on to be installed and running. This integration is **not** distributed via HACS — installing through both HACS and the add-on's auto-deploy at the same time caused version conflicts on the same `/config/custom_components/can_gateway_v3/` folder.
 
 ## API (port 8099)
 

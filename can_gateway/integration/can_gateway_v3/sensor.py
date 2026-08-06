@@ -7,12 +7,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
-    CONF_CAN_BITRATE,
-    CONF_SERIAL_BAUDRATE,
-    CONF_SERIAL_PORT,
-    DEFAULT_CAN_BITRATE,
-    DEFAULT_SERIAL_BAUDRATE,
-    DEFAULT_SERIAL_PORT,
+    CONF_ADDON_API_URL,
     DOMAIN,
     GATEWAY_DEVICE_ID,
 )
@@ -141,9 +136,7 @@ class GatewayStatusSensor(SensorEntity):
             if isinstance(info.firmware_build_datetime, str) and info.firmware_build_datetime
         }
         return {
-            "serial_port": self._entry.data.get(CONF_SERIAL_PORT, DEFAULT_SERIAL_PORT),
-            "serial_baudrate": self._entry.data.get(CONF_SERIAL_BAUDRATE, DEFAULT_SERIAL_BAUDRATE),
-            "can_bitrate": self._entry.data.get(CONF_CAN_BITRATE, DEFAULT_CAN_BITRATE),
+            "addon_api_url": self._entry.data.get(CONF_ADDON_API_URL, ""),
             "selected_module_id": self._coordinator.selected_module_id,
             "module_count": len(module_ids),
             "module_ids": module_ids,
@@ -156,7 +149,7 @@ class GatewayStatusSensor(SensorEntity):
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={(DOMAIN, GATEWAY_DEVICE_ID)},
-            name="CAN Gateway v3",
+            name="CAN Gateway",
             manufacturer="Dark-Smart",
             model="USB-CAN (SLCAN)",
         )
@@ -200,7 +193,7 @@ class GatewayLastScanSensor(SensorEntity):
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={(DOMAIN, GATEWAY_DEVICE_ID)},
-            name="CAN Gateway v3",
+            name="CAN Gateway",
             manufacturer="Dark-Smart",
             model="USB-CAN (SLCAN)",
         )

@@ -1,13 +1,6 @@
 {
   "config": {
     "step": {
-      "user": {
-        "title": "CAN Gateway v3",
-        "description": "Choose how Home Assistant connects to the CAN bus. On Home Assistant OS with the CAN Gateway add-on, the integration is installed and configured automatically when the add-on starts.",
-        "data": {
-          "connection_mode": "Connection"
-        }
-      },
       "addon": {
         "title": "CAN Gateway Add-on",
         "description": "Add-on API: {addon_url}\n{bus_status}\nSaved modules: {module_count}\n\n{modules_log}\n\nUse scan in add-on panel or tick below, then submit.",
@@ -15,37 +8,11 @@
           "trigger_addon_scan": "Run discovery scan now (via add-on)",
           "scan_on_setup": "Run another scan when integration starts"
         }
-      },
-      "serial": {
-        "title": "Direct USB / SLCAN",
-        "description": "Home Assistant opens the serial port directly (no Supervisor add-on).",
-        "data": {
-          "serial_port": "Serial port (COM/tty)",
-          "serial_baudrate": "Serial baudrate",
-          "can_bitrate": "CAN bitrate",
-          "scan_on_setup": "Run initial scan automatically after setup",
-          "scan_during_add": "Optional: scan modules during add flow",
-          "scan_deep": "Deep scan (probe full ID range 1..254)",
-          "scan_duration_sec": "Scan duration (seconds)",
-          "scan_interval_sec": "Pause between scan bursts (seconds)"
-        }
-      },
-      "scan_progress": {
-        "title": "Scanning modules",
-        "description": "Scanning CAN modules. This can take up to 2-5 minutes.\nStage: {scan_stage}\nRemaining: {remaining_seconds}s\nFound modules: {found_count}"
-      },
-      "finish": {
-        "title": "Scan results",
-        "description": "Found modules:\n{modules_log}\n\nClick Submit to create integration entry."
       }
     },
     "error": {
       "addon_unreachable": "Add-on unreachable. {error}",
       "addon_read_failed": "Could not read add-on data. {error}"
     }
-  },
-  "progress": {
-    "scan_modules": "Scanning modules on CAN bus"
   }
 }
-

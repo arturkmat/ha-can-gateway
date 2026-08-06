@@ -9,8 +9,8 @@ from typing import Any, Callable, Awaitable
 
 from homeassistant.core import HomeAssistant
 
-from .can_io import CanFrameSender
 from .can_request import wait_config_response, wait_ota_status
+from .types import CanFrameSender
 from .protocol import (
     COMMAND_OTA_ABORT,
     COMMAND_OTA_BEGIN,

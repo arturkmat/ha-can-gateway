@@ -294,7 +294,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     _LOGGER.info(
-        "CAN Gateway v3 (add-on client) connected to %s slug=%s — catalog from /api/entities",
+        "CAN Gateway (add-on client) connected to %s slug=%s — catalog from /api/entities",
         base_url,
         resolved_slug or slug,
     )

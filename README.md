@@ -130,13 +130,13 @@ Jeśli encje CAN pojawiły się w HA **zanim** wykonałeś skan w panelu dodatku
 
 
 
-1. **Ustawienia → Urządzenia i usługi → CAN Gateway v3** → menu (⋮) → **Usuń**.
+1. **Ustawienia → Urządzenia i usługi → CAN Gateway** → menu (⋮) → **Usuń**.
 
 2. Zrestartuj dodatek **CAN Gateway** (Ustawienia → Dodatki → CAN Gateway → Uruchom ponownie).
 
 3. Otwórz panel Ingress dodatku → **Skanuj magistralę** — poczekaj na zapis katalogu (`discovery_version ≥ 1`, liczba encji > 0).
 
-4. Integracja zostanie dodana ponownie automatycznie (Supervisor discovery) albo ręcznie: **Dodaj integrację → CAN Gateway v3 → tryb add-on**.
+4. Integracja zostanie dodana ponownie automatycznie (Supervisor discovery) albo ręcznie: **Dodaj integrację → CAN Gateway**.
 
 5. Encje w HA powinny odpowiadać wyłącznie katalogowi z `/data/entities.json`.
 
@@ -146,11 +146,11 @@ Sensor **Gateway Last Scan** w integracji pokazuje `waiting`, dopóki dodatek ni
 
 
 
-## Instalacja integracji bez Supervisor (direct serial)
+## Instalacja integracji bez auto-deploy (ręczna kopia)
 
 
 
-Bez Supervisor lub gdy chcesz tylko integrację (port SLCAN w HA Core, bez dodatku):
+Integracja **wymaga działającego dodatku** — łączy się z jego REST API (`GET /api/discovery`, `GET /api/entities`) i nie ma trybu pracy bez niego (dawny tryb "direct serial", w którym integracja sama otwierała port USB/CAN, został usunięty — dubel logiki skanu/CAN I/O z dodatkiem generował konflikty). Jeśli z jakiegoś powodu auto-deploy dodatku (`deploy_integration.sh`) nie zadziałał:
 
 
 
@@ -158,7 +158,7 @@ Bez Supervisor lub gdy chcesz tylko integrację (port SLCAN w HA Core, bez dodat
 
 2. Zrestartuj HA.
 
-3. **Dodaj integrację → CAN Gateway v3** — tryb **direct serial** (integracja otwiera port) lub **add-on** (jeśli dodatek działa).
+3. **Dodaj integrację → CAN Gateway** — wymaga uruchomionego i osiągalnego dodatku CAN Gateway.
 
 
 

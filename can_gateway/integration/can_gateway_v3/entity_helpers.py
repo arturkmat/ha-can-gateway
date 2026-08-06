@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .can_io import CanFrameSender
 from .const import DATA_ADDON_CLIENT, DOMAIN
+from .types import CanFrameSender
 from .coordinator import CanGatewayCoordinator
 
 if TYPE_CHECKING:

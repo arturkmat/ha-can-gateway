@@ -277,7 +277,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             else:
                 new_data = dict(entry.data)
                 new_data[CONF_INITIAL_SCAN_DONE] = True
-                new_data[CONF_DISCOVERED_MODULES] = await client.get_modules()
                 hass.config_entries.async_update_entry(entry, data=new_data)
                 if addon_catalog_ready(await client.get_discovery()):
                     coordinator.mark_scan_finished(
@@ -295,7 +294,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     _LOGGER.info(
-        "CAN Gateway v3 (add-on client) connected to %s slug=%s — catalog from /api/entities",
+        "CAN Gateway (add-on client) connected to %s slug=%s — catalog from /api/entities",
         base_url,
         resolved_slug or slug,
     )
@@ -304,7 +303,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, list(CORE_PLATFORMS))
-    hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+    runtime = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+    if runtime:
+        coordinator = runtime.get("coordinator")
+        if coordinator:
+            coordinator.clear_all_entities()
     if DOMAIN in hass.data and not hass.data[DOMAIN]:
         hass.data.pop(DOMAIN)
     return unload_ok

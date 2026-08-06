@@ -28,7 +28,7 @@ def module_device_info(coordinator: CanGatewayCoordinator, module_id: int) -> De
 def gateway_device_info() -> DeviceInfo:
     return DeviceInfo(
         identifiers={(DOMAIN, GATEWAY_DEVICE_ID)},
-        name="CAN Gateway v3",
+        name="CAN Gateway",
         manufacturer="Dark-Smart",
         model="USB-CAN (SLCAN)",
     )

@@ -1,5 +1,19 @@
 # Changelog — ha-can-gateway
 
+## 2026-08-06 (add-on v5.0.15)
+
+### refactor: usunięcie trybu "direct serial", integracja wyłącznie w trybie add-on
+
+- **Usunięty tryb direct serial** z `custom_components/can_gateway_v3/`: integracja obsługiwała dawniej dwa tryby połączenia — `addon` (REST API dodatku) i `serial` (integracja sama otwierała port USB/CAN, niezależnie od dodatku). Utrzymywanie dwóch niezależnych implementacji odczytu/dekodowania magistrali CAN (dodatek + integracja) było źródłem duplikacji i ryzyka rozjazdu logiki. Integracja działa teraz **wyłącznie** jako cienki klient REST API dodatku.
+- **Usunięte pliki/kod:** `can_io.py` (implementacja `SlcanSerialBridge`, cała obsługa protokołu SLCAN po porcie szeregowym) — usunięty całkowicie; współdzielone aliasy typów (`CanFrameSender`, `RawPayloadCallback`) przeniesione do nowego `types.py`. W `__init__.py` usunięta cała gałąź fallback `async_setup_entry`/`async_unload_entry` dla trybu serial oraz osiem pomocniczych funkcji skanu magistrali używanych wyłącznie w tej gałęzi. W `config_flow.py` usunięte kroki `async_step_serial`, `async_step_scan_progress`, `async_step_finish`, `_run_discovery_scan`, `_detect_default_serial_port` i pokrewne — krok `user` przechodzi teraz od razu do `async_step_addon` (jedyny dostępny tryb). W `const.py` usunięte stałe specyficzne dla serial (`CONNECTION_MODE_SERIAL`, `CONF_SERIAL_PORT`, `CONF_SERIAL_BAUDRATE`, `CONF_CAN_BITRATE`, `DEFAULT_SERIAL_PORT`, `DEFAULT_SERIAL_BAUDRATE`, `DEFAULT_CAN_BITRATE`). Usunięta zależność `pyserial` z `manifest.json`.
+- **`sensor.py`:** encja `Gateway Status` raportowała atrybuty `serial_port`/`serial_baudrate`/`can_bitrate` nawet w trybie add-on, gdzie te pola nigdy nie były ustawiane w `entry.data` — zawsze pokazywały fałszywe wartości domyślne. Zastąpione pojedynczym atrybutem `addon_api_url`.
+- **`if entry.data.get(connection_mode) != "addon": return False`** — jeśli ktoś ma jeszcze stary config entry z `connection_mode=serial` z poprzedniej wersji, `async_setup_entry` teraz jawnie odmawia setupu z komunikatem błędu zamiast próbować (nieistniejącej już) ścieżki serial.
+- **Testy:** 56/56 przechodzi bez zmian (żaden test nie odwoływał się do trybu serial).
+
+### chore: nazwa integracji bez numeru protokołu w display name
+
+- Wyświetlana nazwa integracji zmieniona z „CAN Gateway v3" na „CAN Gateway" (manifest `name`, tytuły kroków config_flow, urządzenie bramki w device_info, logi startowe) — `v3` w folderze/domenie (`can_gateway_v3`) było mylone z numerem wersji softu, podczas gdy w rzeczywistości odnosi się do generacji protokołu CAN. Numer wersji softu (`5.0.15`) jest już widoczny osobno w polu „Wersja" w UI integracji. **Techniczny `domain` w manifest.json (`can_gateway_v3`) pozostaje bez zmian** — zmiana domeny wymagałaby usunięcia i ponownego dodania integracji w HA (utrata wszystkich encji/urządzeń), więc świadomie tego uniknięto.
+
 ## 2026-08-06 (add-on v5.0.11–v5.0.14)
 
 ### fix: brakujące moduły/encje w HA (10 zamiast 15 urządzeń) + przyciski pulse-relay nigdy nie tworzone
