@@ -1,5 +1,15 @@
 # Changelog — ha-can-gateway
 
+## 2026-08-06 (integration v5.0.16)
+
+### fix: przekaźniki "zombie" po wielokrotnych szybkich skanach (unique_id race condition)
+
+- **Objaw:** po kilku skanach magistrali w krótkim czasie, część encji `switch` przestawała reagować na OFF (slider się przesuwał, ale przekaźnik fizycznie zostawał włączony) — działało dopiero szybkie ON→OFF. W logach HA widoczne: `Platform can_gateway_v3 does not generate unique IDs. ID m101_hc595_relay24 already exists — ignoring`.
+- **Przyczyna:** `_poll_discovery()` w `addon_setup.py` woła `_reload_platforms()` (pełny `async_unload_platforms` + `async_forward_entry_setups`) za **każdą** zmianą `discovery_version` — a to rośnie przy każdym skanie. Przy kilku skanach pod rząd kolejne reloady odpalały się bez odstępu; HA nie zawsze zdążał w pełni wyczyścić poprzednią rundę (rejestr encji w pamięci, nie na dysku) zanim zaczynała się kolejna, co powodowało przejściowy konflikt `unique_id` — nowa (poprawna) instancja encji była **ignorowana** przez HA, a stara "zombie" instancja zostawała widoczna w UI z nieaktualnym stanem/referencją do `can_send`.
+- **Fix:** dodany debounce w `_reload_platforms()` — wymuszony minimalny odstęp 4 s między kolejnymi zakończeniami reload (`asyncio.sleep` na resztę okna, nie pomijanie aktualizacji). Nie zmienia semantyki, tylko daje Home Assistantowi czas na pełne posprzątanie poprzedniej rundy.
+- **Obejście natychmiastowe:** pełny restart Home Assistant Core czyści "zombie" encje od razu (zastosowane podczas diagnozy).
+- **Testy:** 53/53 przechodzi (brak dedykowanego testu dla debounce — wymagałby symulacji HA config_entries API).
+
 ## 2026-08-06 (add-on v5.0.17)
 
 ### refactor: usunięcie mostu MQTT

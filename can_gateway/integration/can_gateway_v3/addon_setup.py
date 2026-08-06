@@ -73,6 +73,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
     last_discovery_version: int | None = None
     reload_lock = asyncio.Lock()
+    last_reload_monotonic: float | None = None
+    MIN_RELOAD_INTERVAL_S = 4.0
 
     async def _persist_modules(modules: list[dict]) -> None:
         if not modules:
@@ -116,13 +118,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return True
 
     async def _reload_platforms() -> None:
+        nonlocal last_reload_monotonic
         async with reload_lock:
+            # Debounce: rapid consecutive discovery_version bumps (e.g. several
+            # manual bus scans in quick succession) used to trigger back-to-back
+            # unload/reload cycles. Home Assistant's own entity-registry cleanup
+            # from the previous reload does not always finish before the next one
+            # starts, which surfaced as transient "does not generate unique IDs"
+            # warnings and could leave a stale ("zombie") entity instance wired to
+            # an old coordinator/can_send reference — visible as switches whose
+            # slider moves but that don't actually toggle the relay. Enforce a
+            # minimum gap between reloads so HA has time to fully settle.
+            now = asyncio.get_running_loop().time()
+            if last_reload_monotonic is not None:
+                elapsed = now - last_reload_monotonic
+                if elapsed < MIN_RELOAD_INTERVAL_S:
+                    await asyncio.sleep(MIN_RELOAD_INTERVAL_S - elapsed)
             await hass.config_entries.async_unload_platforms(entry, list(CORE_PLATFORMS))
             for platform in CORE_PLATFORMS:
                 try:
                     await hass.config_entries.async_forward_entry_setups(entry, (platform,))
                 except Exception:  # noqa: BLE001
                     _LOGGER.warning("Platform '%s' failed to reload", platform, exc_info=True)
+            last_reload_monotonic = asyncio.get_running_loop().time()
 
     async def _poll_entities(_now=None) -> None:
         try:
