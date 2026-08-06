@@ -27,10 +27,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         for desc in descriptions:
             if desc.unique_id in entities:
                 continue
-            # Debug: log binding_type
-            binding_type = desc.get("binding_type", "unknown")
-            _LOGGER.debug(f"Creating switch for {desc.get('name')} (binding_type={binding_type})")
-            
             ent = CanGatewaySwitch(coordinator, can_send, desc)
             entities[desc.unique_id] = ent
             new_entities.append(ent)
