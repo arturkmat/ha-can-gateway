@@ -498,15 +498,27 @@ class BusManager:
         for chip in chips:
             self.send_config_and_wait(mid, COMMAND_GET_MCP23017_ROLE_DUMP, [chip], timeout=0.25)
             time.sleep(0.055)
-        response = self.send_config_and_wait(mid, COMMAND_GET_MCP23017_INPUT_STATE, timeout=0.6)
-        _LOGGER.info("MCP input response module=%s raw=%s", mid, response)
-        if response is not None and len(response) >= 5 and int(response[2]) == 0:
+        # COMMAND_GET_MCP23017_INPUT_STATE requires the chip_idx arg just like
+        # ROLE_DUMP (undocumented in the protocol comment, confirmed by the
+        # firmware returning a uniform status=2 error for every module when no
+        # arg is sent, vs ROLE_DUMP -- which does send [chip] -- succeeding).
+        # Query once per known chip and store per chip offset so entity_export's
+        # per-chip lookup (falls back to "0" only when no chip-specific key
+        # exists) resolves the right register for multi-chip modules.
+        new_input_state: dict[str, dict[str, int]] = {}
+        for chip in chips:
+            response = self.send_config_and_wait(
+                mid, COMMAND_GET_MCP23017_INPUT_STATE, [chip], timeout=0.6
+            )
+            _LOGGER.info("MCP input response module=%s chip=%s raw=%s", mid, chip, response)
+            if response is not None and len(response) >= 5 and int(response[2]) == 0:
+                new_input_state[str(chip)] = {"gpa": int(response[3]), "gpb": int(response[4])}
+            time.sleep(0.055)
+        if new_input_state:
             with self._lock:
                 rec = self._modules.get(mid)
                 if rec is not None:
-                    rec.runtime.mcp_input_state = {
-                        "0": {"gpa": int(response[-2]), "gpb": int(response[-1])}
-                    }
+                    rec.runtime.mcp_input_state = new_input_state
                     self._notify()
 
     def clear_shutter_config(self, module_id: int) -> None:

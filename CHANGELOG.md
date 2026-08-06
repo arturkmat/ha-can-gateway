@@ -1,5 +1,28 @@
 # Changelog — ha-can-gateway
 
+## 2026-08-06 (add-on v5.0.25)
+
+### fix: binarne sensory MCP23017 modułu 121 zawsze "unknown" (błędne odpytywanie stanu wejść)
+
+- **Objaw:** encje `binary_sensor.can_m121_mcp6_pin*` (wejścia na ekspanderze I2C MCP23017 modułu 121, `mcp=0x26`) miały stan `unknown` bez końca — mimo że role pinów (button/binary) były poprawnie wykryte i encje istniały.
+- **Przyczyna:** `ensure_relay_metadata()` w `bus_manager.py` wysyłał `COMMAND_GET_MCP23017_INPUT_STATE` (68) **bez argumentu chip_idx**, w odróżnieniu od `COMMAND_GET_MCP23017_ROLE_DUMP` (70), który poprawnie przekazuje `[chip]`. Firmware bez znajomości chipa odpowiadał uniwersalnym błędem `status=2` dla **każdego** modułu (z ekspanderem i bez) — potwierdzone w logach (`MCP input response module=121 raw=[121, 68, 2, 0, 0, 0, 0, 0]`, identycznie dla wszystkich 15 modułów). Dodatkowo odczyt `gpa`/`gpb` z odpowiedzi używał złych indeksów (`response[-2]/response[-1]` zamiast `response[3]/response[4]`).
+- **Fix:** `COMMAND_GET_MCP23017_INPUT_STATE` wysyłane teraz per znany chip z `args=[chip]`, analogicznie do ROLE_DUMP; wynik zapisywany pod kluczem `str(chip)` w `mcp_input_state` (zamiast na sztywno pod `"0"`); poprawione indeksy `gpa=response[3]`, `gpb=response[4]`; błędny status (`!= 0`) dla danego chipa jest pomijany, nie nadpisuje istniejących dobrych danych zerami.
+- **Testy:** nowy `tests/test_mcp_input_state.py` (3 testy: argument chip_idx faktycznie wysyłany, poprawne zapisanie gpa/gpb pod właściwym kluczem chipa, błąd statusu nie kasuje wcześniej odczytanego stanu). 60/60 przechodzi.
+
+## 2026-08-06 (5.0.19 → 5.0.24, skrót)
+
+### fix: seria drobnych poprawek stanów binarnych, przycisków i reconnectów SLCAN
+
+- **Binary sensor (integracja):** `is_on`/`_coerce_bool`/`_coerce_binary_state` — normalizacja wartości z JSON (bool/int/string) zamiast gołego `bool(value)`, które błędnie rzutowało np. `"0"`/`"false"` na `True`.
+- **Przycisk jako binary_sensor (`m{id}_btn{n}_pressed`):** naprawiony brak resetu do `False` — poprzednio stan zostawał `True` na stałe po pierwszym naciśnięciu (nic go nie cofało). Teraz auto-reset po 0.75s (`_button_reset_handles` + `hass.loop.call_later`), z anulowaniem poprzedniego timera przy kolejnym szybkim kliknięciu.
+- **Wirtualne mapowanie pulsu:** moduł 103 przekaźnik 23 → puls na `m201_gpio120_binary` (`coordinator.pulse_binary_sensor()`), dedykowane pod konkretne okablowanie.
+- **`entity_export.py`:** te same reguły koercji zastosowane do budowy encji GPIO z katalogu (`valid`/`logical`).
+- **`addon_sync.py`:** normalizacja `value` dla platformy `binary_sensor` przy synchronizacji z żywego API dodatku (`apply_addon_entities`/`apply_addon_entity_values`).
+- **`bus_manager.py`:** serializacja reconnectów SLCAN podczas skanowania (`_reconnect_lock`, unikanie równoległego `_try_reopen()` z pętlą reconnect); ograniczenie skanu ról MCP do zgłoszonych przez firmware chipów zamiast prób 8 adresów za każdym razem; priorytetyzacja odświeżania persystowanych modułów.
+- **Watchdog magistrali CAN** (`_watchdog_loop`/`_force_bus_reset`/`_mark_bus_activity`) — wykrywa zawieszony `_io_lock` (np. `recv()` ignorujące timeout na zdegradowanym łączu USB-serial) i wymusza reset portu bez czekania na zablokowany lock; naprawia zgłoszenie "kilkukrotne naciśnięcie przycisku zawiesza komunikację, pomaga restart dodatku".
+- **Testy:** `tests/test_bus_watchdog.py` (3 testy).
+
+
 ## 2026-08-06 (add-on v5.0.18)
 
 ### fix: pozycja rolet/stan przekaźników zamrożone od ostatniego skanu (regresja z BUG #11)
