@@ -790,14 +790,33 @@ class ConfiguratorEngine:
         shutters_count, hc595_regs, mcp_present, _mcp_offset = self._summary_hw_flags(summary, ctx)
         self.get_all_gpio_roles()
         if shutters_count > 0:
-            for shutter_num in range(1, MAX_SHUTTERS + 1):
-                resp = self.send_request(
-                    mid, COMMAND_GET_SHUTTER_RELAYS, [shutter_num], timeout=0.35, log_traffic=False
-                )
-                if resp and len(resp) >= 6 and resp[4] != 0 and resp[5] != 0:
-                    ctx.shutter_relay_pairs[shutter_num] = {"up": int(resp[4]), "down": int(resp[5])}
-                else:
-                    ctx.shutter_relay_pairs.pop(shutter_num, None)
+
+            def _poll_shutter_relay_pairs(timeout_s: float) -> None:
+                for shutter_num in range(1, MAX_SHUTTERS + 1):
+                    resp = self.send_request(
+                        mid,
+                        COMMAND_GET_SHUTTER_RELAYS,
+                        [shutter_num],
+                        timeout=timeout_s,
+                        log_traffic=False,
+                    )
+                    if (
+                        resp
+                        and len(resp) >= 6
+                        and int(resp[2]) == 0
+                        and int(resp[4]) != 0
+                        and int(resp[5]) != 0
+                    ):
+                        ctx.shutter_relay_pairs[shutter_num] = {
+                            "up": int(resp[4]),
+                            "down": int(resp[5]),
+                        }
+                    else:
+                        ctx.shutter_relay_pairs.pop(shutter_num, None)
+
+            _poll_shutter_relay_pairs(0.35)
+            if not ctx.shutter_relay_pairs:
+                _poll_shutter_relay_pairs(0.75)
             if not ctx.shutter_relay_pairs:
                 _LOGGER.warning(
                     "Module %s: summary shutters=%s but GET_SHUTTER_RELAYS returned no pairs "

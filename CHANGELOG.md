@@ -1,5 +1,11 @@
 # Changelog — ha-can-gateway
 
+## 2026-09-23 (add-on + integration v5.0.34)
+
+### fix: brak encji cover po skanie gdy GET_SHUTTER_RELAYS timeoutuje przy zajętej magistrali
+- **`read_gpio_roles_from_module`:** drugi pass `COMMAND_GET_SHUTTER_RELAYS` (timeout 0,75 s) gdy pierwszy (0,35 s) nie zwróci par; wymagany `status=0` w CONFIG response (jak `GET_SHIFT595_FLAGS`).
+- **Test:** `tests/test_shutter_relay_read.py`.
+
 ## 2026-09-23 (add-on + integration v5.0.33)
 
 ### fix: sterowanie przekaźnikami/roletami z HA zwracało HTTP 200 mimo braku reakcji na magistrali
