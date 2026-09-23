@@ -192,3 +192,14 @@ def test_discovery_payload_uses_persisted_entity_counts(tmp_path, monkeypatch):
     assert payload["entity_count"] == 1
     assert payload["discovery_version"] == 1
     assert payload["modules"][0]["entity_count"] == 1
+
+
+def test_entity_platform_counts_helper():
+    BusManager, _store_mod = _load_bus_manager()
+    entities = [
+        {"platform": "switch", "unique_id": "a", "module_id": 1},
+        {"platform": "cover", "unique_id": "b", "module_id": 1},
+        {"platform": "cover", "unique_id": "c", "module_id": 2},
+    ]
+    assert BusManager._entity_platform_counts(entities) == {"switch": 1, "cover": 2}
+    assert BusManager._module_entity_platform_counts(entities, 1) == {"switch": 1, "cover": 1}

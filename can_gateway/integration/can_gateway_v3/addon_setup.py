@@ -219,7 +219,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if frame_class == CAN_V2_CLASS_CONFIG_REQUEST:
             if cmd == 59 and len(data) >= 4:
                 state = {0: "off", 1: "on", 2: "toggle"}.get(int(data[3]), "toggle")
-                await client.set_relay_state(module_id, int(data[2]), state)
+                relay_no = int(data[2])
+                result = await client.set_relay_state(module_id, relay_no, state)
+                if not result.get("ok"):
+                    _LOGGER.warning(
+                        "Relay command failed module=%s relay=%s state=%s: %s",
+                        module_id,
+                        relay_no,
+                        state,
+                        result.get("error", result),
+                    )
                 await _poll_entities()
                 return
             if cmd == 1 and len(data) >= 2:

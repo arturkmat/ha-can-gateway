@@ -1,5 +1,14 @@
 # Changelog — ha-can-gateway
 
+## 2026-09-23 (add-on + integration v5.0.33)
+
+### fix: sterowanie przekaźnikami/roletami z HA zwracało HTTP 200 mimo braku reakcji na magistrali
+- **Przyczyna:** `ConfiguratorEngine.set_relay_state()` uznawało sukces (`ok: true`), gdy moduł **nie** odpowiadał CONFIG ACK, ale w cache był stary stan z telemetrii `0x600` — typowy POST ~248 B: `{"ok":true,"module_id":…,"relay_no":…,"state":"on|off","on":…,"pulse_ms":0}`. v5.0.32 naprawił crash importu (`mapping_write_service`), ale błędny sukces pozostawał. Magistrala mogła być otwarta na UART (SLCAN `bus_ok`), a ramki nie docierały do gałęzi CAN (hub/kanał) lub moduł nie ACK-ował.
+- **Fix:** wymagany CONFIG response `SET_RELAY` status=0; brak ACK → `ok: false`, log `ERROR`, REST **502** (503 gdy `bus_ok`/magistrala niedostępna lub `bus busy`). `GET /api/status`: alias **`can_connected`** (= `bus_ok`). `send_request` loguje ERROR gdy bus zamknięty. Blokada skanu: `io_acquire` timeout 20 s zamiast wiszenia w nieskończoność.
+- **Diagnostyka (persist scan):** log `platforms={switch:…, cover:…}`; ostrzeżenia pustego katalogu / `bus_ok=false` / brak `cover`/`switch` mimo GET_SUMMARY.
+- **`GET_SHUTTER_RELAYS`:** timeout 0,35 s; integracja loguje błędy REST relay/shutter.
+- **Testy:** `tests/test_set_relay_ack.py`.
+
 ## 2026-09-23 (add-on + integration v5.0.32)
 
 ### fix: hotfix — SyntaxError w `mapping_write_service.py` (crash loop dodatku od v5.0.31)

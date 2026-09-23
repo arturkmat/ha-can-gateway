@@ -92,6 +92,10 @@ class CanGatewaySwitch(SwitchEntity):
         if relay_no is None:
             relay_no = _extract_index(self._attr_unique_id, "_relay")
         if relay_no is None:
+            _LOGGER.warning(
+                "Switch %s: missing relay_no in catalog attributes — reload integration after bus scan",
+                self._attr_unique_id,
+            )
             return
         await self._can_send(
             can_v2_config_request_id(self._desc.module_id),
@@ -106,6 +110,10 @@ class CanGatewaySwitch(SwitchEntity):
         if relay_no is None:
             relay_no = _extract_index(self._attr_unique_id, "_relay")
         if relay_no is None:
+            _LOGGER.warning(
+                "Switch %s: missing relay_no in catalog attributes — reload integration after bus scan",
+                self._attr_unique_id,
+            )
             return
         await self._can_send(
             can_v2_config_request_id(self._desc.module_id),

@@ -156,8 +156,10 @@ class BusManager:
 
     def status(self) -> dict[str, Any]:
         with self._lock:
+            ok = self.bus_ok
             return {
-                "bus_ok": self.bus_ok,
+                "bus_ok": ok,
+                "can_connected": ok,
                 "bus_error": self._bus_error,
                 "can_interface": self._options.can_interface,
                 "can_port": self._active_port or self._options.can_port,
@@ -189,6 +191,96 @@ class BusManager:
         from entity_export import build_entities_snapshot
 
         return build_entities_snapshot(modules)
+
+    @staticmethod
+    def _entity_platform_counts(entities: list[dict[str, Any]]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for row in entities:
+            if not isinstance(row, dict):
+                continue
+            platform = str(row.get("platform") or "")
+            if platform:
+                counts[platform] = counts.get(platform, 0) + 1
+        return counts
+
+    @staticmethod
+    def _module_entity_platform_counts(
+        entities: list[dict[str, Any]], module_id: int
+    ) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for row in entities:
+            if not isinstance(row, dict) or row.get("module_id") != module_id:
+                continue
+            platform = str(row.get("platform") or "")
+            if platform:
+                counts[platform] = counts.get(platform, 0) + 1
+        return counts
+
+    def _log_entity_catalog_diagnostics(
+        self, modules: list[dict[str, Any]], entities: list[dict[str, Any]]
+    ) -> None:
+        """Surface incomplete deep-read / empty catalog issues in add-on logs."""
+        totals = self._entity_platform_counts(entities)
+        if modules and not entities:
+            _LOGGER.warning(
+                "Entity catalog empty after scan (%d module(s)) — HA integration will stay "
+                "in 'waiting for scan'. Check bus_ok, run Ingress bus scan, verify UART/SLCAN.",
+                len(modules),
+            )
+            return
+        if not self.bus_ok:
+            _LOGGER.warning(
+                "Persisted entity catalog (%d entities, platforms=%s) but CAN bus is not open "
+                "(%s) — relay/cover control from HA will fail until SLCAN port/bitrate is fixed.",
+                len(entities),
+                totals,
+                self._bus_error or "bus not open",
+            )
+        for mod in modules:
+            if not isinstance(mod, dict):
+                continue
+            mid = mod.get("module_id")
+            if not isinstance(mid, int):
+                continue
+            per = self._module_entity_platform_counts(entities, mid)
+            switch_n = per.get("switch", 0) + per.get("button", 0)
+            cover_n = per.get("cover", 0)
+            summary_shutters = mod.get("shutter_count")
+            summary_relays = mod.get("relay_count")
+            rt = mod.get("runtime") if isinstance(mod.get("runtime"), dict) else {}
+            shutter_map = rt.get("shutter_map") if isinstance(rt.get("shutter_map"), dict) else {}
+            gpio_roles = rt.get("gpio_roles") if isinstance(rt.get("gpio_roles"), dict) else {}
+            if summary_shutters is None and mod.get("summary_details"):
+                details = str(mod.get("summary_details") or "")
+                if "shutters=" in details:
+                    try:
+                        summary_shutters = int(details.split("shutters=")[1].split()[0].strip(","))
+                    except (IndexError, ValueError):
+                        pass
+            try:
+                summary_shutters_i = int(summary_shutters) if summary_shutters is not None else 0
+            except (TypeError, ValueError):
+                summary_shutters_i = 0
+            try:
+                summary_relays_i = int(summary_relays) if summary_relays is not None else 0
+            except (TypeError, ValueError):
+                summary_relays_i = 0
+            if summary_shutters_i > 0 and cover_n == 0:
+                _LOGGER.warning(
+                    "Module %s: GET_SUMMARY reports shutters=%s but catalog has no cover entities "
+                    "(runtime shutter_map keys=%s). Deep refresh may have timed out on "
+                    "COMMAND_GET_SHUTTER_RELAYS — retry module refresh or bus scan.",
+                    mid,
+                    summary_shutters_i,
+                    list(shutter_map.keys()),
+                )
+            elif summary_relays_i > 0 and switch_n == 0 and not gpio_roles and not rt.get("mcp_relay_pins"):
+                _LOGGER.warning(
+                    "Module %s: GET_SUMMARY reports relays=%s but catalog has no switch/button "
+                    "entities (runtime gpio_roles empty). Deep GPIO role read likely failed.",
+                    mid,
+                    summary_relays_i,
+                )
 
     def _merge_live_entity_values(
         self, catalog: list[dict[str, Any]], live: list[dict[str, Any]]
@@ -283,12 +375,15 @@ class BusManager:
                 mid = mod.get("module_id")
                 if isinstance(mid, int):
                     self._persisted_modules[int(mid)] = mod
+        platform_counts = self._entity_platform_counts(entities)
         _LOGGER.info(
-            "Persisted %d module(s), %d entity(ies), discovery_version=%s to /data",
+            "Persisted %d module(s), %d entity(ies), discovery_version=%s, platforms=%s to /data",
             len(modules),
             len(entities),
             discovery_version,
+            platform_counts,
         )
+        self._log_entity_catalog_diagnostics(modules, entities)
 
     def discovery_payload(self) -> dict[str, Any]:
         store = discovery_snapshot(scan_status=self._last_scan_status)

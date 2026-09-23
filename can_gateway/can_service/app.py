@@ -47,6 +47,18 @@ def _json_error(message: str, status: int = 400) -> web.Response:
     return web.json_response({"ok": False, "error": message}, status=status)
 
 
+def _can_command_http_status(result: dict) -> int:
+    """503 = bus unavailable; 502 = command reached stack but module/bus did not ACK."""
+    if result.get("ok"):
+        return 200
+    err = str(result.get("error") or "").lower()
+    if "bus not open" in err or "bus busy" in err:
+        return 503
+    if result.get("error") == "bus not open":
+        return 503
+    return 502
+
+
 def create_app(bus: BusManager) -> web.Application:
     app = web.Application()
 
@@ -170,8 +182,28 @@ def create_app(bus: BusManager) -> web.Application:
             except Exception:  # noqa: BLE001
                 body = {}
         state = str(body.get("state", "toggle"))
+        if not bus.bus_ok:
+            err = bus.status().get("bus_error") or "bus not open"
+            _LOGGER.error(
+                "POST /relays rejected: CAN not connected (module=%s relay=%s): %s",
+                mid,
+                relay_no,
+                err,
+            )
+            return web.json_response(
+                {"ok": False, "error": err, "module_id": mid, "relay_no": relay_no},
+                status=503,
+            )
         result = await asyncio.to_thread(bus.set_relay_state, mid, relay_no, state)
-        status = 200 if result.get("ok") else 503
+        if not result.get("ok"):
+            _LOGGER.error(
+                "POST /relays failed module=%s relay=%s state=%s: %s",
+                mid,
+                relay_no,
+                state,
+                result.get("error", result),
+            )
+        status = _can_command_http_status(result)
         return web.json_response(result, status=status)
 
     async def api_shutter_command(request: web.Request) -> web.Response:
@@ -195,15 +227,27 @@ def create_app(bus: BusManager) -> web.Application:
             command,
             param,
         )
+        if not bus.bus_ok:
+            err = bus.status().get("bus_error") or "bus not open"
+            _LOGGER.error(
+                "POST /shutters rejected: CAN not connected (module=%s shutter=%s): %s",
+                mid,
+                shutter_no,
+                err,
+            )
+            return web.json_response(
+                {"ok": False, "error": err, "module_id": mid, "shutter_no": shutter_no},
+                status=503,
+            )
         result = await asyncio.to_thread(bus.set_shutter_command, mid, shutter_no, command, param)
         if not result.get("ok"):
-            _LOGGER.warning(
+            _LOGGER.error(
                 "Shutter command failed module=%s shutter=%s: %s",
                 mid,
                 shutter_no,
                 result.get("error", result),
             )
-        status = 200 if result.get("ok") else 503
+        status = _can_command_http_status(result)
         return web.json_response(result, status=status)
 
     async def api_pinouts(_request: web.Request) -> web.Response:

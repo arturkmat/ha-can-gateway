@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
 from pinout_data import DEVICE_PINOUTS
+
+_LOGGER = logging.getLogger(__name__)
 from protocol_constants import (
     CAN_V2_CLASS_CONFIG_RESPONSE,
     CAN_V2_CLASS_SENSOR_EVENTS,
@@ -458,23 +460,52 @@ class ConfiguratorEngine:
         pulse_ms = self.relay_pulse_ms_for(mid, rn)
         if pulse_ms > 0 and code == 2:
             code = 1
-        self._io_acquire()
         try:
-            resp = self.send_request(mid, COMMAND_SET_RELAY_STATE, [rn, code], timeout=0.35, log_traffic=False)
-            if resp is not None and len(resp) >= 5 and int(resp[2]) == 0:
-                is_on = bool(int(resp[4]))
-                self._store_relay_state(mid, rn, is_on)
-            elif resp is not None and len(resp) >= 3 and int(resp[2]) != 0:
-                return {"ok": False, "error": f"status={int(resp[2])}", "module_id": mid, "relay_no": rn}
-            else:
-                self.collect_relay_state_frames(0.35)
-                is_on = bool(self.context(mid).virtual_relay_values.get(rn, 0))
-                if resp is None and rn not in self.context(mid).virtual_relay_values:
-                    return {"ok": False, "error": "no response", "module_id": mid, "relay_no": rn}
+            self._io_acquire()
+        except RuntimeError as exc:
+            return {"ok": False, "error": str(exc), "module_id": mid, "relay_no": rn}
+        try:
+            try:
+                resp = self.send_request(
+                    mid, COMMAND_SET_RELAY_STATE, [rn, code], timeout=0.75, log_traffic=False
+                )
+            except RuntimeError as exc:
+                _LOGGER.error(
+                    "SET_RELAY CAN send failed module=%s relay=%s state=%s: %s",
+                    mid,
+                    rn,
+                    state,
+                    exc,
+                )
+                return {"ok": False, "error": str(exc), "module_id": mid, "relay_no": rn}
+            if resp is None:
+                _LOGGER.error(
+                    "SET_RELAY no module ACK module=%s relay=%s state=%s (bus open but no CONFIG response)",
+                    mid,
+                    rn,
+                    state,
+                )
+                return {"ok": False, "error": "no response", "module_id": mid, "relay_no": rn}
+            if len(resp) < 5 or int(resp[2]) != 0:
+                status = int(resp[2]) if len(resp) >= 3 else -1
+                _LOGGER.error(
+                    "SET_RELAY rejected module=%s relay=%s state=%s status=%s raw=%s",
+                    mid,
+                    rn,
+                    state,
+                    status,
+                    resp[:8],
+                )
+                return {
+                    "ok": False,
+                    "error": f"status={status}" if status >= 0 else "invalid response",
+                    "module_id": mid,
+                    "relay_no": rn,
+                }
+            is_on = bool(int(resp[4]))
+            self._store_relay_state(mid, rn, is_on)
             if pulse_ms > 0 and code == 1 and is_on:
                 threading.Timer(max(0.05, (pulse_ms + 80) / 1000.0), lambda: self._pulse_resync(mid, rn)).start()
-            elif code in (0, 1):
-                self.collect_relay_state_frames(0.35)
             self._io.notify()
             return {"ok": True, "module_id": mid, "relay_no": rn, "state": state, "on": is_on, "pulse_ms": pulse_ms}
         finally:
@@ -677,6 +708,11 @@ class ConfiguratorEngine:
         bypass_config_lock: bool = False,
     ) -> list[int] | None:
         if not self._io.bus_ok():
+            _LOGGER.error(
+                "send_request skipped: CAN bus not open (module=%s cmd=%s)",
+                target_id,
+                command,
+            )
             return None
         payload = [target_id, command, 0, 0, 0, 0, 0, 0]
         if args:
@@ -756,12 +792,19 @@ class ConfiguratorEngine:
         if shutters_count > 0:
             for shutter_num in range(1, MAX_SHUTTERS + 1):
                 resp = self.send_request(
-                    mid, COMMAND_GET_SHUTTER_RELAYS, [shutter_num], timeout=0.15, log_traffic=False
+                    mid, COMMAND_GET_SHUTTER_RELAYS, [shutter_num], timeout=0.35, log_traffic=False
                 )
                 if resp and len(resp) >= 6 and resp[4] != 0 and resp[5] != 0:
                     ctx.shutter_relay_pairs[shutter_num] = {"up": int(resp[4]), "down": int(resp[5])}
                 else:
                     ctx.shutter_relay_pairs.pop(shutter_num, None)
+            if not ctx.shutter_relay_pairs:
+                _LOGGER.warning(
+                    "Module %s: summary shutters=%s but GET_SHUTTER_RELAYS returned no pairs "
+                    "(bus busy or module not responding during deep read)",
+                    mid,
+                    shutters_count,
+                )
         else:
             ctx.shutter_relay_pairs.clear()
         if hc595_regs > 0:

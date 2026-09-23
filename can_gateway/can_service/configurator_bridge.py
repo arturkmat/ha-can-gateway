@@ -67,7 +67,8 @@ class _BusIoAdapter:
         return self._bus._normalize_message(message)  # noqa: SLF001
 
     def io_acquire(self) -> None:
-        self._bus._scan_lock.acquire()  # noqa: SLF001
+        if not self._bus._scan_lock.acquire(blocking=True, timeout=20.0):  # noqa: SLF001
+            raise RuntimeError("bus busy (scan or refresh in progress)")
         self._bus._rx_enabled.clear()  # noqa: SLF001
 
     def io_release(self) -> None:
