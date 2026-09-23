@@ -1,5 +1,10 @@
 # Changelog — ha-can-gateway
 
+## 2026-09-23 (add-on + integration v5.0.32)
+
+### fix: hotfix — SyntaxError w `mapping_write_service.py` (crash loop dodatku od v5.0.31)
+- **`apply_button_relay_mapping`:** usunięto drugi separator `*` w sygnaturze (`SyntaxError: * argument may appear only once`, linia 80). Serwis CAN nie dochodził do inicjalizacji SLCAN/UART — w logu wyłącznie restart s6 i traceback przy imporcie modułu.
+
 ## 2026-09-23 (add-on + integration v5.0.31)
 
 ### feat: mapowania — TOF edge 5, trasa rolety 93, legacy timed, reset fabryczny CONFIG 120

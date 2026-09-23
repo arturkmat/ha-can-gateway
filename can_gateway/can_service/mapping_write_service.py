@@ -77,7 +77,6 @@ def apply_button_relay_mapping(
     action_code: int,
     relay_num: int,
     relay_state: int,
-    *,
     timed_min: int = 0,
     use_relay_pulse: bool = False,
 ) -> bool:
