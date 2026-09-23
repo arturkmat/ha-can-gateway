@@ -1,5 +1,23 @@
 # Changelog — ha-can-gateway
 
+## 2026-09-23 (add-on + integration v5.0.31)
+
+### feat: mapowania — TOF edge 5, trasa rolety 93, legacy timed, reset fabryczny CONFIG 120
+- **`can_gateway/lib/protocol_constants.py`:** sync z konfiguratorem — `COMMAND_FACTORY_RESET_KEEP_ID` (120), BLE OTA 103–105, `BINARY_MAPPING_TRIGGER_LABELS` (TOF/PIR=5, «Stan czujnika 1do1»), `unpack_relay_state_byte`, `unpack_set_binding_arg5`, etykieta «Zalacz (permanentne)».
+- **`mapping_service.py`:** odczyt legacy/zdalnych stanów przez `format_binding_state_label`; trasa 93 dekoduje spakowany bajt relay+state jak konfigurator/snapshot.
+- **`mapping_write_service.py`:** zapis `SET_SHUTTER_BIND_ROUTE` (93), `pack_set_binding_args` dla legacy timed/impuls; edge z etykiety TOF.
+- **REST:** `POST /api/modules/{id}/factory-reset` → CONFIG 120 (opcjonalne JSON `confirm`).
+- **`custom_components/can_gateway_v3/protocol.py`:** `COMMAND_FACTORY_RESET_KEEP_ID`, `BIND_RELAY_STATE_USE_PULSE`.
+- **Testy:** `tests/test_mapping_binding_pack.py`.
+
+### docs: RPi 5 + CAN-HUB-STM32 (UART SLCAN)
+- `README.md`: opcje dodatku, okablowanie Pi↔hub, checklist UART/BT, oczekiwania SLCAN; `can_gateway/config.yaml`: `/dev/ttyAMA0`, `/dev/serial0` w `devices`.
+
+## 2026-09-22
+
+### docs: wersja dodatku w README
+- `README.md` i `can_gateway/README.md` podaja dodatek **5.0.30** i integracje **5.0.28** (zamiast v0.7.1). Encje: switch, cover, light, sensor, binary_sensor, button, select.
+
 ## 2026-08-06 (add-on v5.0.30)
 
 ### fix: stan wejść MCP23017 był zamrożony na stałe — brak cyklicznego odświeżania (nie żyje jak przekaźniki/rolety)

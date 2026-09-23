@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from protocol_constants import (
     ACTION_MAP,
     BIND_RELAY_STATE_TIMED_MIN,
+    BIND_RELAY_STATE_USE_PULSE,
     COMMAND_CLEAR_BINARY_BIND_ROUTES,
     COMMAND_CLEAR_BINDING_ROUTES,
     COMMAND_CLEAR_LED_BINDINGS,
@@ -27,10 +28,12 @@ from protocol_constants import (
     COMMAND_SET_SHUTTER_BIND_ROUTE,
     COMMAND_SET_SHUTTER_MAPPING,
     RELAY_LINK_TRIGGER_MIRROR,
+    pack_set_binding_args,
     pack_set_led_binding_args,
     pack_set_relay_bind_route_args,
     pack_set_relay_link_args,
     parse_binding_state_label,
+    binary_edge_mode_from_trigger_label,
     STATE_MAP,
     UNKNOWN_MODULE_IDS,
 )
@@ -74,13 +77,32 @@ def apply_button_relay_mapping(
     action_code: int,
     relay_num: int,
     relay_state: int,
+    *,
+    timed_min: int = 0,
+    use_relay_pulse: bool = False,
 ) -> bool:
     src = int(source_module_id)
     tgt = int(target_module_id)
+    wire_state = int(relay_state)
+    if wire_state == BIND_RELAY_STATE_USE_PULSE:
+        use_relay_pulse = True
+        wire_state = 1
+    if wire_state >= BIND_RELAY_STATE_TIMED_MIN:
+        timed_min = wire_state - BIND_RELAY_STATE_TIMED_MIN
+        wire_state = 1
+    args = pack_set_binding_args(
+        src,
+        int(button_num),
+        int(action_code),
+        int(relay_num),
+        wire_state,
+        timed_min=int(timed_min),
+        use_relay_pulse=use_relay_pulse,
+    )
     resp = bus.send_config_and_wait(
         tgt,
         COMMAND_SET_MAPPING,
-        [src, int(button_num), int(action_code), int(relay_num), int(relay_state)],
+        args,
         timeout=1.0,
     )
     if resp is None or len(resp) < 3 or int(resp[2]) != 0:
@@ -236,16 +258,58 @@ def send_mappings(bus: BusManager, module_id: int, rows: list[dict[str, Any]]) -
                     errors.append(f"led_binding btn{btn}")
                 continue
 
+            if kind in ("shutter_bind_route", "shutter bind route"):
+                trigger_kind = int(row.get("trigger_kind", 1))
+                trigger_value = int(row.get("trigger_value", row.get("trigger_val", 0)))
+                tgt_mod = int(row["target_module_id"])
+                tgt_relay = int(row.get("target_relay", row.get("relay", 1)))
+                st_raw = row.get("target_state", row.get("state", 1))
+                if isinstance(st_raw, str) and not str(st_raw).isdigit():
+                    tgt_state, _timed = parse_binding_state_label(str(st_raw))
+                    if _timed > 0:
+                        tgt_state = BIND_RELAY_STATE_TIMED_MIN + _timed
+                else:
+                    tgt_state = int(st_raw)
+                resp = bus.send_config_and_wait(
+                    mid,
+                    COMMAND_SET_SHUTTER_BIND_ROUTE,
+                    [
+                        int(row["shutter_num"]),
+                        trigger_kind,
+                        trigger_value,
+                        tgt_mod,
+                        tgt_relay,
+                        tgt_state,
+                    ],
+                    timeout=0.8,
+                )
+                if resp and len(resp) >= 3 and int(resp[2]) == 0:
+                    applied += 1
+                else:
+                    errors.append("shutter_bind_route")
+                continue
+
             if kind == "binary_route":
+                edge = row.get("edge_mode")
+                if edge is None and row.get("edge_label"):
+                    edge = binary_edge_mode_from_trigger_label(str(row["edge_label"]))
+                edge_mode = int(edge if edge is not None else 3)
+                st_raw = row.get("state", row.get("relay_state", 2))
+                if isinstance(st_raw, str) and not str(st_raw).isdigit():
+                    relay_state, timed_min = parse_binding_state_label(str(st_raw))
+                    if timed_min > 0:
+                        relay_state = BIND_RELAY_STATE_TIMED_MIN + timed_min
+                else:
+                    relay_state = int(st_raw)
                 resp = bus.send_config_and_wait(
                     mid,
                     COMMAND_SET_BINARY_BIND_ROUTE,
                     [
                         int(row["source_sensor"]),
-                        int(row.get("edge_mode", 3)),
+                        edge_mode,
                         int(row["target_module_id"]),
                         int(row["target_relay"]),
-                        int(row.get("state", 2)),
+                        relay_state,
                     ],
                     timeout=0.8,
                 )
@@ -297,7 +361,20 @@ def send_mappings(bus: BusManager, module_id: int, rows: list[dict[str, Any]]) -
                 continue
 
             relay = int(row.get("relay_num", row.get("relay", 1)))
-            st = _relay_state(row.get("relay_state", row.get("state", 1)))
+            st_raw = row.get("relay_state", row.get("state", 1))
+            timed_min = 0
+            use_pulse = False
+            if isinstance(st_raw, str) and not str(st_raw).isdigit():
+                st, timed_min = parse_binding_state_label(str(st_raw))
+                if timed_min > 0:
+                    st = BIND_RELAY_STATE_TIMED_MIN + timed_min
+            elif isinstance(st_raw, int) and st_raw >= BIND_RELAY_STATE_TIMED_MIN:
+                st = int(st_raw)
+            elif isinstance(st_raw, int) and st_raw == BIND_RELAY_STATE_USE_PULSE:
+                st = BIND_RELAY_STATE_USE_PULSE
+                use_pulse = True
+            else:
+                st = _relay_state(st_raw)
             if apply_button_relay_mapping(
                 bus,
                 source_module_id=src,
@@ -306,6 +383,8 @@ def send_mappings(bus: BusManager, module_id: int, rows: list[dict[str, Any]]) -
                 action_code=act,
                 relay_num=relay,
                 relay_state=st,
+                timed_min=timed_min,
+                use_relay_pulse=use_pulse,
             ):
                 applied += 1
             else:
@@ -336,5 +415,4 @@ def clear_mappings(bus: BusManager, module_id: int) -> dict[str, Any]:
     bus.send_config_and_wait(mid, COMMAND_CLEAR_SHUTTER_BIND_ROUTES, timeout=0.5)
     bus.send_config_and_wait(mid, COMMAND_CLEAR_SENSOR_BIND_ROUTES, timeout=0.5)
     time.sleep(0.1)
-    bus.store_mappings(mid, [])
-    return {"ok": True, "module_id": mid}
+    bu

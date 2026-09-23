@@ -14,6 +14,7 @@ from protocol_constants import (
     COMMAND_GET_MODULE_NAME,
     COMMAND_GET_RELAY_PULSE,
     COMMAND_GET_SHUTTER_RELAYS,
+    COMMAND_FACTORY_RESET_KEEP_ID,
     COMMAND_GET_SUMMARY,
     COMMAND_REBOOT_MODULE,
     COMMAND_SET_RELAY_STATE,
@@ -1059,6 +1060,25 @@ class BusManager:
         ok = self.send_config(mid, COMMAND_REBOOT_MODULE)
         return {"ok": ok, "module_id": mid}
 
+    def factory_reset_module(self, module_id: int) -> dict[str, Any]:
+        """CONFIG 120 — clear NVS except module_id and mod_name."""
+        mid = int(module_id)
+        if not (1 <= mid <= 255):
+            return {"ok": False, "error": "invalid module_id"}
+        if not self.ensure_bus():
+            return {"ok": False, "error": self._bus_error or "bus not open"}
+        resp = self.send_config_and_wait(mid, COMMAND_FACTORY_RESET_KEEP_ID, timeout=3.0)
+        if resp is None or len(resp) < 3:
+            return {"ok": False, "error": "no response", "module_id": mid}
+        status = int(resp[2])
+        if status != 0:
+            return {"ok": False, "error": f"config status {status}", "module_id": mid}
+        with self._lock:
+            rec = self._modules.get(mid)
+            if rec is not None:
+                rec.runtime.mappings.clear()
+        return {"ok": True, "module_id": mid}
+
     def discovery_scan(self) -> dict[str, Any]:
         if not self.ensure_bus():
             self._last_scan_status = "error"
@@ -1111,3 +1131,4 @@ class BusManager:
         result["discovery_version"] = store.get("discovery_version")
         result["entity_count"] = store.get("entity_count", 0)
         return result
+      

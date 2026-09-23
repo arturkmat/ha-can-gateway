@@ -1,5 +1,5 @@
 name: CAN Gateway
-version: "5.0.30"
+version: "5.0.31"
 slug: can_gateway
 description: CAN bus gateway (SLCAN), web panel, REST API and auto-setup of can_gateway_v3 integration.
 url: https://github.com/arturkmat/ha-can-gateway
@@ -28,6 +28,9 @@ devices:
   - /dev/ttyUSB0
   - /dev/ttyACM0
   - /dev/ttyACM1
+  # Raspberry Pi 5 — wewnętrzny UART do CAN-HUB-STM32 (SLCAN); wymaga uart: true poniżej
+  - /dev/ttyAMA0
+  - /dev/serial0
 options:
   connectivity:
     can_interface: slcan

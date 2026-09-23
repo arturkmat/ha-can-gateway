@@ -207,6 +207,7 @@ ACTION_MAP = {
 
 STATE_MAP = {
     "Wylacz": 0,
+    "Zalacz (permanentne)": 1,
     "Zalacz": 1,
     "Przelacz": 2,
     "Impuls": 2,
@@ -214,7 +215,7 @@ STATE_MAP = {
 
 STATE_LABEL_BY_CODE = {
     0: "Wylacz",
-    1: "Zalacz",
+    1: "Zalacz (permanentne)",
     2: "Przelacz",
 }
 
@@ -284,6 +285,32 @@ def pack_set_binding_args(
     elif use_relay_pulse:
         args.append(BINDING_FLAG_USE_RELAY_PULSE)
     return args
+
+
+def unpack_set_binding_arg5(arg5: int) -> int:
+    """Decode optional SET_BINDING arg5 → timed minutes (0 = permanent)."""
+    arg5 = int(arg5) & 0xFF
+    if (arg5 & BINDING_FLAG_TIMED) == 0:
+        return 0
+    mins = (arg5 >> 1) & 0x7F
+    return max(1, mins)
+
+
+def binding_state_wire_to_label(code: int) -> str:
+    return format_binding_state_label(int(code))
+
+
+def unpack_relay_state_byte(packed: int, kind_byte: int = 0) -> tuple[int, int]:
+    """Decode relay + state from GET route response byte (V3 packed wire)."""
+    packed = int(packed) & 0xFF
+    kind_byte = int(kind_byte) & 0xFF
+    relay6 = packed & 0x3F
+    state6 = (packed >> 6) & 0x03
+    if state6 != 0:
+        return relay6, state6
+    if packed <= 63:
+        return relay6, (kind_byte >> 4) & 0x03
+    return packed, (kind_byte >> 4) & 0x03
 
 
 def binding_state_label_to_wire(state_label: str, *, timed_min: int = 0) -> int:
@@ -372,7 +399,32 @@ BINARY_EDGE_LABELS = {
     "Rosnace": 1,
     "Opadajace": 2,
     "Oba zbocza": 3,
+    "Stan czujnika 1do1": 4,
 }
+
+BINARY_EDGE_TOF_OFF_DELAY = 5
+
+BINARY_MAPPING_TRIGGER_LABELS = {
+    **BINARY_EDGE_LABELS,
+    "TOF (PIR)": BINARY_EDGE_TOF_OFF_DELAY,
+}
+
+_LEGACY_BINARY_TRIGGER_LABELS = {
+    "Czujnik PIR TOF — ruch (narastajace)": 1,
+    "Czujnik PIR TOF — koniec (opadajace)": 2,
+    "Czujnik PIR TOF — oba zbocza": 3,
+    "Czujnik PIR TOF — lustro 1:1": 4,
+}
+
+
+def binary_edge_mode_from_trigger_label(label: str) -> int | None:
+    text = (label or "").strip()
+    if text in BINARY_MAPPING_TRIGGER_LABELS:
+        return int(BINARY_MAPPING_TRIGGER_LABELS[text])
+    if text in _LEGACY_BINARY_TRIGGER_LABELS:
+        return int(_LEGACY_BINARY_TRIGGER_LABELS[text])
+    return None
+
 
 SHUTTER_TRIGGER_LABELS = {
     "Otwieranie": (1, 1),
@@ -470,6 +522,13 @@ COMMAND_SET_RELAY_LINK               = 116  # args: src_relay, trigger, target_m
 COMMAND_CLEAR_RELAY_LINKS            = 117
 COMMAND_GET_RELAY_LINK_COUNT         = 118  # resp: count, max
 COMMAND_GET_RELAY_LINK               = 119  # arg: index -> resp: src_relay, trigger, target_module, target_relay, target_state
+COMMAND_BLE_OTA_ENABLE               = 103
+COMMAND_SET_BLE_OTA_PIN              = 104
+COMMAND_GET_BLE_OTA_PIN_STATE        = 105
+COMMAND_WIFI_OTA_ENABLE              = 106  # reserved — firmware returns CONFIG UNSUPPORTED
+COMMAND_SET_WIFI_OTA_PIN             = 107
+COMMAND_GET_WIFI_OTA_PIN_STATE       = 108
+COMMAND_FACTORY_RESET_KEEP_ID        = 120
 
 RELAY_LINK_TRIGGER_ON = 1
 RELAY_LINK_TRIGGER_OFF = 2
@@ -589,15 +648,3 @@ MODULE_NAME_PART_COUNT = 3  # 3 * 5 = 15
 LOG_MAX_LINES = 4000
 
 CONFIG_STATUS_OK = 0
-CONFIG_STATUS_UNSUPPORTED = 1
-CONFIG_STATUS_INVALID_ARGUMENT = 2
-CONFIG_STATUS_FULL = 3
-CONFIG_STATUS_NOT_FOUND = 4
-
-CONFIG_STATUS_LABELS = {
-    CONFIG_STATUS_OK: "OK",
-    CONFIG_STATUS_UNSUPPORTED: "UNSUPPORTED",
-    CONFIG_STATUS_INVALID_ARGUMENT: "INVALID_ARGUMENT",
-    CONFIG_STATUS_FULL: "FULL",
-    CONFIG_STATUS_NOT_FOUND: "NOT_FOUND",
-}

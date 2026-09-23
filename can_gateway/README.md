@@ -1,6 +1,6 @@
 # CAN Gateway — Home Assistant Supervisor Add-on
 
-Supervisor add-on for Dark-Smart CAN bus automation. It owns the USB/CAN adapter, exposes a web panel (Ingress), REST API, and **automatically installs and configures** the `can_gateway_v3` Home Assistant integration.
+Supervisor add-on **5.0.30** for Dark-Smart CAN bus automation. It owns the USB/CAN adapter (SLCAN, 125 kbit/s), exposes a web panel (Ingress), REST API, and **automatically installs and configures** the `can_gateway_v3` integration (manifest **5.0.28**).
 
 ## Quick start (Home Assistant OS)
 
@@ -8,6 +8,8 @@ Supervisor add-on for Dark-Smart CAN bus automation. It owns the USB/CAN adapter
 2. Add: `https://github.com/arturkmat/ha-can-gateway`
 3. Install **CAN Gateway**, configure `can_port` / `can_bitrate`, start the add-on.
 4. Done — no manual `custom_components` copy and no separate HACS install.
+
+**Raspberry Pi 5 + CAN-HUB-STM32 (internal UART):** use `can_port` `/dev/ttyAMA0` (or `/dev/serial0`), `can_bitrate` **125000**, `tty_baudrate` **460800** — see the repo root [`README.md`](../README.md) section *Raspberry Pi 5 + CAN-HUB-STM32*.
 
 On each start the add-on:
 

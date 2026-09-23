@@ -124,6 +124,23 @@ def create_app(bus: BusManager) -> web.Application:
         status = 200 if result.get("ok") else 503
         return web.json_response(result, status=status)
 
+    async def api_module_factory_reset(request: web.Request) -> web.Response:
+        try:
+            mid = int(request.match_info["module_id"])
+        except (KeyError, ValueError):
+            return _json_error("invalid module_id")
+        body: dict = {}
+        if request.can_read_body:
+            try:
+                body = await request.json()
+            except Exception:  # noqa: BLE001
+                body = {}
+        if body.get("confirm") is False:
+            return _json_error("confirm required (JSON confirm: true)")
+        result = await asyncio.to_thread(bus.factory_reset_module, mid)
+        status = 200 if result.get("ok") else 503
+        return web.json_response(result, status=status)
+
     async def api_module_tab_load(request: web.Request) -> web.Response:
         try:
             mid = int(request.match_info["module_id"])
@@ -479,6 +496,7 @@ def create_app(bus: BusManager) -> web.Application:
     app.router.add_post("/api/modules/{module_id}/tab-load", api_module_tab_load)
     app.router.add_post("/api/modules/{module_id}/refresh", api_module_refresh)
     app.router.add_post("/api/modules/{module_id}/reboot", api_module_reboot)
+    app.router.add_post("/api/modules/{module_id}/factory-reset", api_module_factory_reset)
     app.router.add_post("/api/modules/{module_id}/relays/{relay_no}", api_relay_set)
     app.router.add_get("/api/modules/{module_id}/relays/{relay_no}/pulse", api_relay_pulse_get)
     app.router.add_post("/api/modules/{module_id}/relays/{relay_no}/pulse", api_relay_pulse_set)

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from protocol_constants import (
     ACTION_MAP,
-    BINARY_EDGE_LABELS,
+    BINARY_MAPPING_TRIGGER_LABELS,
     COMMAND_GET_BINDING,
     COMMAND_GET_BINDING_COUNT,
     COMMAND_GET_BINARY_BIND_ROUTE,
@@ -27,11 +27,11 @@ from protocol_constants import (
     RELAY_LINK_TRIGGER_MIRROR,
     RELAY_LINK_TRIGGER_NAME,
     SHUTTER_TRIGGER_LABELS,
-    STATE_LABEL_BY_CODE,
     UNKNOWN_MODULE_IDS,
     format_binding_state_label,
     unpack_get_led_binding_response,
     unpack_get_relay_link_response,
+    unpack_relay_state_byte,
 )
 
 if TYPE_CHECKING:
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 _SHUTTER_CMD_LABEL = {1: "Otworz", 2: "Zamknij", 3: "Stop"}
 _ACTION_NAME = {code: name for name, code in ACTION_MAP.items()}
-_EDGE_NAME = {code: name for name, code in BINARY_EDGE_LABELS.items()}
+_EDGE_NAME = {code: name for name, code in BINARY_MAPPING_TRIGGER_LABELS.items()}
 _SENSOR_KIND = {1: "DS18B20", 2: "BME280 Temp", 3: "SHT30 Temp", 5: "NTC"}
 
 
@@ -159,7 +159,7 @@ def read_all_mappings(bus: BusManager, module_id: int) -> dict[str, Any]:
                 target_id="-",
                 target_type="Przekaznik",
                 target=str(rly),
-                state=STATE_LABEL_BY_CODE.get(st, str(st)),
+                state=format_binding_state_label(st),
             )
         )
 
@@ -192,7 +192,7 @@ def read_all_mappings(bus: BusManager, module_id: int) -> dict[str, Any]:
                         target_id=str(oid),
                         target_type="Przekaznik",
                         target=str(rly),
-                        state=STATE_LABEL_BY_CODE.get(st, str(st)),
+                        state=format_binding_state_label(st),
                     )
                 )
         for src, btn, act, sht_num, sht_cmd in _read_shutter_bindings(bus, oid):
@@ -277,7 +277,7 @@ def read_all_mappings(bus: BusManager, module_id: int) -> dict[str, Any]:
                     target_id=str(int(rr[5])),
                     target_type="Czujnik binarny",
                     target=str(int(rr[6])),
-                    state=STATE_LABEL_BY_CODE.get(int(rr[7]), str(int(rr[7]))),
+                    state=format_binding_state_label(int(rr[7])),
                 )
             )
 
@@ -287,9 +287,12 @@ def read_all_mappings(bus: BusManager, module_id: int) -> dict[str, Any]:
             rr = bus.send_config_and_wait(mid, COMMAND_GET_SHUTTER_BIND_ROUTE, [idx], timeout=0.35)
             if rr is None or len(rr) < 8 or int(rr[2]) != 0:
                 continue
+            trigger_kind = int(rr[4]) & 0x0F
+            trigger_val = int(rr[5])
+            target_relay, target_state = unpack_relay_state_byte(int(rr[7]), int(rr[4]))
             trigger = next(
-                (k for k, v in SHUTTER_TRIGGER_LABELS.items() if v == (int(rr[4]), int(rr[5]))),
-                f"trigger {int(rr[4])}:{int(rr[5])}",
+                (k for k, v in SHUTTER_TRIGGER_LABELS.items() if v == (trigger_kind, trigger_val)),
+                f"Pozycja > {trigger_val}" if trigger_kind == 2 else f"trigger {trigger_kind}:{trigger_val}",
             )
             rows.append(
                 _row(
@@ -298,8 +301,8 @@ def read_all_mappings(bus: BusManager, module_id: int) -> dict[str, Any]:
                     receiver="Zdalny",
                     target_id=str(int(rr[6])),
                     target_type="Stan rolety",
-                    target=str(int(rr[7])),
-                    state="Zalacz",
+                    target=str(target_relay),
+                    state=format_binding_state_label(target_state),
                 )
             )
 
