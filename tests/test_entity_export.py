@@ -88,6 +88,7 @@ def test_build_entities_includes_core_platforms():
     assert "m201_local_relay3_pulse" in uids
     assert "m201_shutter1" in uids
     assert "m201_btn1_action" in uids
+    assert "m201_btn1_pressed" in uids
     assert "m201_gpio7_binary" in uids
     assert "m201_s1_ds18b20_temperature" in uids
 
@@ -134,8 +135,8 @@ def test_build_entities_stale_summary_relay_count_ignored():
         "name": "Garaz",
         "button_count": 1,
         "relay_count": 16,
-        "shutter_count": 1,
-        "summary_details": "buttons=1 relays=16 ds18=0 shutters=1",
+        "shutter_count": 0,
+        "summary_details": "buttons=1 relays=16 ds18=0 shutters=0",
         "runtime": {
             "relays": [{"relay_no": i, "on": False, "source": "local"} for i in range(1, 17)],
         },
@@ -143,6 +144,75 @@ def test_build_entities_stale_summary_relay_count_ignored():
     entities = build_entities_for_module(mod)
     uids = {e["unique_id"] for e in entities}
     assert uids == {"m7_online"}
+
+
+def test_build_entities_covers_from_shutter_count_without_map():
+    """Old coordinator created covers from GET_SUMMARY shutter_count alone."""
+    mod = {
+        "module_id": 12,
+        "shutter_count": 2,
+        "summary_details": "buttons=0 relays=4 ds18=0 shutters=2",
+        "runtime": {
+            "gpio_roles": {
+                "5": {"gpio": 5, "role": 2, "role_name": "Relay", "index": 1},
+                "6": {"gpio": 6, "role": 2, "role_name": "Relay", "index": 2},
+                "7": {"gpio": 7, "role": 2, "role_name": "Relay", "index": 3},
+            },
+            "relay_gpio_map": {"1": 5, "2": 6, "3": 7},
+            "shutter_map": {},
+        },
+    }
+    entities = build_entities_for_module(mod)
+    uids = {e["unique_id"] for e in entities}
+    platforms = {e["platform"] for e in entities}
+    assert "cover" in platforms
+    assert "m12_shutter1" in uids
+    assert "m12_shutter2" in uids
+    # Without shutter_map pairs, relays stay switches (cannot reserve unknown indices).
+    assert "m12_local_relay1" in uids
+    assert "m12_local_relay3" in uids
+
+
+def test_build_entities_binary_from_gpio_roles_without_values():
+    mod = {
+        "module_id": 9,
+        "runtime": {
+            "gpio_roles": {
+                "4": {"gpio": 4, "role": 1, "role_name": "Button", "index": 1},
+                "8": {"gpio": 8, "role": 4, "role_name": "BinarySensor", "index": 1},
+            },
+        },
+    }
+    entities = build_entities_for_module(mod)
+    uids = {e["unique_id"] for e in entities}
+    assert "m9_btn1_action" in uids
+    assert "m9_btn1_pressed" in uids
+    assert "m9_gpio8_binary" in uids
+    pressed = next(e for e in entities if e["unique_id"] == "m9_btn1_pressed")
+    assert pressed["platform"] == "binary_sensor"
+    binary = next(e for e in entities if e["unique_id"] == "m9_gpio8_binary")
+    assert binary["platform"] == "binary_sensor"
+
+
+def test_build_entities_telemetry_sensor():
+    mod = {
+        "module_id": 3,
+        "runtime": {
+            "sensors": [
+                {
+                    "sensor_no": 1,
+                    "sensor_type": 1,
+                    "data": list((2150).to_bytes(4, "little", signed=True)),
+                }
+            ],
+        },
+    }
+    entities = build_entities_for_module(mod)
+    uid = "m3_s1_ds18b20_temperature"
+    row = next(e for e in entities if e["unique_id"] == uid)
+    assert row["platform"] == "sensor"
+    assert row["value"] == 21.5
+    assert row["device_class"] == "temperature"
 
 
 def test_build_entities_module_name_preserved_in_module_dict():

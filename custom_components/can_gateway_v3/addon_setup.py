@@ -8,6 +8,7 @@ from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 
@@ -213,12 +214,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             shutter_no = int(data[1])
             result = await client.set_shutter_command(module_id, shutter_no, command, param)
             if not result.get("ok"):
-                _LOGGER.warning(
+                err = result.get("error", result)
+                _LOGGER.error(
                     "Shutter command failed module=%s shutter=%s: %s",
                     module_id,
                     shutter_no,
-                    result.get("error", result),
+                    err,
                 )
+                raise HomeAssistantError(f"Shutter command failed: {err}")
             await _poll_entities()
             return
 
@@ -230,13 +233,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 relay_no = int(data[2])
                 result = await client.set_relay_state(module_id, relay_no, state)
                 if not result.get("ok"):
-                    _LOGGER.warning(
-                        "Relay command failed module=%s relay=%s state=%s: %s",
+                    err = result.get("error", result)
+                    _LOGGER.error(
+                        "Relay SET_RELAY failed module=%s relay=%s state=%s: %s",
                         module_id,
                         relay_no,
                         state,
-                        result.get("error", result),
+                        err,
                     )
+                    raise HomeAssistantError(f"Relay command failed (no CONFIG ACK): {err}")
                 await _poll_entities()
                 return
             if cmd == 1 and len(data) >= 2:

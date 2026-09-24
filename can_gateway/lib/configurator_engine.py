@@ -376,11 +376,18 @@ class ConfiguratorEngine:
             else:
                 module_id = int(payload[0]) if payload else arb_mid
         else:
-            module_id = int(payload[0])
-            if module_id in UNKNOWN_MODULE_IDS:
-                arb_mid = can_v2_frame_module_id(message.arbitration_id)
-                if arb_mid not in UNKNOWN_MODULE_IDS:
-                    module_id = arb_mid
+            arb_mid = can_v2_frame_module_id(message.arbitration_id)
+            module_id = int(payload[0]) if payload else arb_mid
+            # Prefer arbitration module id when payload[0] is 0/0xFF (same as SENSOR_EVENTS).
+            if module_id in UNKNOWN_MODULE_IDS and arb_mid not in UNKNOWN_MODULE_IDS:
+                module_id = arb_mid
+            elif (
+                frame_class == CAN_V2_CLASS_CONFIG_RESPONSE
+                and arb_mid not in UNKNOWN_MODULE_IDS
+                and module_id != arb_mid
+                and module_id in UNKNOWN_MODULE_IDS
+            ):
+                module_id = arb_mid
 
         if frame_class == CAN_V2_CLASS_STATE_TELEMETRY and self._is_device_info_telemetry(payload):
             hw = payload[1]
@@ -488,7 +495,7 @@ class ConfiguratorEngine:
                 return {"ok": False, "error": str(exc), "module_id": mid, "relay_no": rn}
             if resp is None:
                 _LOGGER.error(
-                    "SET_RELAY no module ACK module=%s relay=%s state=%s (bus open but no CONFIG response)",
+                    "SET_RELAY no module ACK module=%s relay=%s state=%s (frame sent, no CONFIG response)",
                     mid,
                     rn,
                     state,
@@ -753,12 +760,15 @@ class ConfiguratorEngine:
             if message is None:
                 continue
             if can_v2_frame_class(message.arbitration_id) != CAN_V2_CLASS_CONFIG_RESPONSE:
-                self.handle_can_message(message)
+                self.handle_can_message(message, already_normalized=True)
                 continue
             payload = list(message.data)
             if log_traffic:
                 self._io.log(f"RX 0x{message.arbitration_id:03X} {payload}")
             if len(payload) < 4 or payload[1] != command:
+                # Do not drop interleaved CONFIG ACKs (SCAN_SENSORS, GET_BUILD_INFO, …)
+                # — otherwise deep scan loses sensor_scan / shutter maps while polling GPIO.
+                self.handle_can_message(message, already_normalized=True)
                 continue
             if target_id != 0xFF and command not in (
                 COMMAND_SET_MODULE_ID,
@@ -766,6 +776,7 @@ class ConfiguratorEngine:
             ):
                 arb_mid = can_v2_frame_module_id(message.arbitration_id)
                 if payload[0] != target_id and arb_mid != target_id:
+                    self.handle_can_message(message, already_normalized=True)
                     continue
             return payload
         return None
@@ -798,9 +809,14 @@ class ConfiguratorEngine:
         shutters_count, hc595_regs, mcp_present, _mcp_offset = self._summary_hw_flags(summary, ctx)
         self.get_all_gpio_roles()
         if shutters_count > 0:
+            # Only poll slots reported by GET_SUMMARY — scanning MAX_SHUTTERS (28)
+            # with 0.35–0.75 s timeouts saturates the bus and used to wipe good pairs
+            # on every timeout via pop().
+            poll_limit = max(1, min(int(shutters_count), MAX_SHUTTERS))
 
-            def _poll_shutter_relay_pairs(timeout_s: float) -> None:
-                for shutter_num in range(1, MAX_SHUTTERS + 1):
+            def _poll_shutter_relay_pairs(timeout_s: float) -> int:
+                found = 0
+                for shutter_num in range(1, poll_limit + 1):
                     resp = self.send_request(
                         mid,
                         COMMAND_GET_SHUTTER_RELAYS,
@@ -819,13 +835,22 @@ class ConfiguratorEngine:
                             "up": int(resp[4]),
                             "down": int(resp[5]),
                         }
-                    else:
-                        ctx.shutter_relay_pairs.pop(shutter_num, None)
+                        found += 1
+                    # On timeout/error keep any previously known pair — do not pop.
+                return found
 
-            _poll_shutter_relay_pairs(0.35)
-            if not ctx.shutter_relay_pairs:
-                _poll_shutter_relay_pairs(0.75)
-            if not ctx.shutter_relay_pairs:
+            found_n = _poll_shutter_relay_pairs(0.35)
+            if found_n < poll_limit:
+                found_n = max(found_n, _poll_shutter_relay_pairs(0.75))
+            # Drop empty placeholder entries (e.g. from TELE_SHUTTER_STATUS setdefault).
+            for sid in list(ctx.shutter_relay_pairs.keys()):
+                pair = ctx.shutter_relay_pairs.get(sid) or {}
+                if int(pair.get("up", 0) or 0) <= 0 and int(pair.get("down", 0) or 0) <= 0:
+                    ctx.shutter_relay_pairs.pop(sid, None)
+            if not any(
+                int((p or {}).get("up", 0) or 0) > 0 and int((p or {}).get("down", 0) or 0) > 0
+                for p in ctx.shutter_relay_pairs.values()
+            ):
                 _LOGGER.warning(
                     "Module %s: summary shutters=%s but GET_SHUTTER_RELAYS returned no pairs "
                     "(bus busy or module not responding during deep read)",
@@ -996,13 +1021,16 @@ class ConfiguratorEngine:
 
     def _shutter_read_all(self, module_id: int) -> None:
         ctx = self.context(module_id)
-        for shutter_no in range(1, MAX_SHUTTERS + 1):
+        count = int(ctx.shutter_count or 0)
+        poll_limit = max(1, min(count, MAX_SHUTTERS)) if count > 0 else MAX_SHUTTERS
+        for shutter_no in range(1, poll_limit + 1):
             resp = self.send_request(
                 module_id, COMMAND_GET_SHUTTER_RELAYS, [shutter_no], timeout=0.25, log_traffic=False
             )
-            if resp and len(resp) >= 6 and resp[4] != 0 and resp[5] != 0:
+            if resp and len(resp) >= 6 and int(resp[2]) == 0 and resp[4] != 0 and resp[5] != 0:
                 ctx.shutter_relay_pairs[shutter_no] = {"up": int(resp[4]), "down": int(resp[5])}
-            else:
+            # Keep previous pair on timeout — only clear explicit empty assignment.
+            elif resp and len(resp) >= 6 and int(resp[2]) == 0 and resp[4] == 0 and resp[5] == 0:
                 ctx.shutter_relay_pairs.pop(shutter_no, None)
         self.collect_relay_state_frames(0.35)
 

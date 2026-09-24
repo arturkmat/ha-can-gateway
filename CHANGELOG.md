@@ -1,5 +1,17 @@
 # Changelog — ha-can-gateway
 
+## 2026-09-24 (add-on + integration v5.0.37)
+
+### fix: katalog encji po skanie — rolety / binary_sensor / sensor + realny SET_RELAY
+- **Regresja (v5.0.36 catalog-only):** po usunięciu `parser`/`update_from_event` HA bierze encje wyłącznie z `GET /api/entities`. Katalog był niepełny: covers tylko przy niepustym `shutter_map`, `binary_sensor` tylko z `gpio_values` (często pustych po skanie), `sensor` ginął gdy `COMMAND_SCAN_SENSORS` ACK wpadał w trakcie poll GPIO.
+- **`wait_for_response`:** niesparowane CONFIG response są aplikowane przez `handle_can_message` (wcześniej `continue` je gubił — m.in. `SCAN_SENSORS` / `GET_BUILD_INFO` podczas deep read).
+- **`read_gpio_roles_from_module`:** poll `GET_SHUTTER_RELAYS` tylko dla `shutter_count` z summary (nie 28 slotów); timeout **nie** kasuje wcześniej znanych par.
+- **`deep_config`:** `SCAN_SENSORS` / `BUILD_INFO` / `SCAN_MCP` przez `send_config_and_wait`.
+- **`entity_export`:** covers z `shutter_count` gdy mapa pusta (jak stary coordinator); `binary_sensor` z ról GPIO (`BinarySensor` + `btnN_pressed`); pary shutter → cover, pozostałe relaye → switch.
+- **Sterowanie:** `SET_RELAY` nadal wymaga CONFIG ACK (bez fake-ok z cache 0x600); integracja rzuca `HomeAssistantError` gdy ACK brak — ramka jest wysyłana na magistralę.
+- **Wersja:** **5.0.37**; `tools/sync_addon_integration.ps1`.
+- **Testy:** entity_export (cover/binary/sensor), shutter poll, interleaved CONFIG, set_relay ACK.
+
 ## 2026-09-24 (add-on + integration v5.0.36)
 
 ### fix: HA subordinates to add-on entity catalog (single source of truth)

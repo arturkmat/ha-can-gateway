@@ -43,8 +43,11 @@ def refresh_module_deep(bus: BusManager, module_id: int) -> dict[str, Any]:
                 item["name"] = name
                 break
 
+    # Wait for each CONFIG ACK so SCAN_SENSORS / BUILD_INFO land in engine context
+    # before GPIO role polling (fire-and-forget previously lost responses while
+    # wait_for_response discarded unmatched CONFIG frames).
     for cmd in (COMMAND_GET_BUILD_INFO, COMMAND_SCAN_SENSORS, COMMAND_SCAN_MCP23017):
-        bus.send_config(mid, cmd)
+        bus.send_config_and_wait(mid, cmd, timeout=1.0)
         time.sleep(_CMD_GAP_S)
 
     engine.read_gpio_roles_from_module(summary=summary)

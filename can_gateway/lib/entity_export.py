@@ -553,34 +553,132 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
             )
         )
 
+    # Old HA coordinator created covers from GET_SUMMARY shutter_count even when
+    # GET_SHUTTER_RELAYS timed out. Keep that catalog behavior so covers are not
+    # dropped after a busy scan; relay indices stay empty until a deep read succeeds.
+    shutter_count = mod.get("shutter_count")
+    if shutter_count is None:
+        details = str(mod.get("summary_details") or "")
+        if "shutters=" in details:
+            try:
+                shutter_count = int(details.split("shutters=")[1].split()[0].strip(","))
+            except (IndexError, ValueError):
+                shutter_count = 0
+    try:
+        shutter_count_i = int(shutter_count) if shutter_count is not None else 0
+    except (TypeError, ValueError):
+        shutter_count_i = 0
+    if shutter_count_i > 0:
+        existing_covers = {
+            int(sid)
+            for sid, (ro, rc) in shutter_map.items()
+            if int(ro) > 0 or int(rc) > 0
+        }
+        for shutter_no in range(1, min(28, shutter_count_i) + 1):
+            if shutter_no in existing_covers:
+                continue
+            uid = f"m{module_id}_shutter{shutter_no}"
+            shutter_row = next(
+                (
+                    s
+                    for s in (rt.get("shutters") or [])
+                    if isinstance(s, dict) and int(s.get("shutter_no", -1)) == shutter_no
+                ),
+                None,
+            )
+            position = shutter_row.get("position") if isinstance(shutter_row, dict) else None
+            direction = shutter_row.get("direction") if isinstance(shutter_row, dict) else 0
+            entities.append(
+                _entity(
+                    platform="cover",
+                    unique_id=uid,
+                    name=f"CAN M{module_id} Shutter {shutter_no}",
+                    module_id=module_id,
+                    value={
+                        "position": position,
+                        "direction": direction,
+                        "direction_text": (shutter_row or {}).get("direction_text", "stopped"),
+                    },
+                    attributes={
+                        "module_id": module_id,
+                        "shutter_no": shutter_no,
+                        "relay_open_no": None,
+                        "relay_close_no": None,
+                        "gpio_open_no": None,
+                        "gpio_close_no": None,
+                        "gpio_no": None,
+                    },
+                    device_class="shutter",
+                )
+            )
+
     button_role = PIN_ROLE_MAP.get("Button")
-    button_nos: set[int] = set()
+    binary_role = PIN_ROLE_MAP.get("BinarySensor")
     for gpio, info in gpio_roles.items():
         role_code = info.get("role")
         role_name = str(info.get("role_name") or "")
-        if role_name != "Button" and role_code != button_role:
-            continue
-        button_no = int(info.get("index", 0))
-        if button_no <= 0:
-            continue
-        button_nos.add(button_no)
-        uid = f"m{module_id}_btn{button_no}_action"
-        entities.append(
-            _entity(
-                platform="sensor",
-                unique_id=uid,
-                name=f"CAN M{module_id} Button {button_no} Action",
-                module_id=module_id,
-                value=None,
-                attributes={
-                    "module_id": module_id,
-                    "button_no": button_no,
-                    "action_code": None,
-                    "gpio_no": gpio,
-                },
-                icon="mdi:gesture-tap-button",
+        if role_name == "Button" or role_code == button_role:
+            button_no = int(info.get("index", 0))
+            if button_no <= 0:
+                continue
+            uid = f"m{module_id}_btn{button_no}_action"
+            entities.append(
+                _entity(
+                    platform="sensor",
+                    unique_id=uid,
+                    name=f"CAN M{module_id} Button {button_no} Action",
+                    module_id=module_id,
+                    value=None,
+                    attributes={
+                        "module_id": module_id,
+                        "button_no": button_no,
+                        "action_code": None,
+                        "gpio_no": gpio,
+                    },
+                    icon="mdi:gesture-tap-button",
+                )
             )
-        )
+            # Old coordinator also exposed a momentary binary_sensor per button.
+            btn_bin_uid = f"m{module_id}_btn{button_no}_pressed"
+            entities.append(
+                _entity(
+                    platform="binary_sensor",
+                    unique_id=btn_bin_uid,
+                    name=f"CAN M{module_id} Button {button_no}",
+                    module_id=module_id,
+                    value=False,
+                    attributes={
+                        "module_id": module_id,
+                        "button_no": button_no,
+                        "gpio_no": gpio,
+                    },
+                    device_class="running",
+                    icon="mdi:gesture-tap-button",
+                )
+            )
+        elif role_name == "BinarySensor" or role_code == binary_role:
+            # Catalog from roles alone (gpio_values may be empty until active read).
+            uid = f"m{module_id}_gpio{gpio}_binary"
+            live = None
+            gv = (rt.get("gpio_values") or {}).get(str(gpio)) or (rt.get("gpio_values") or {}).get(gpio)
+            if isinstance(gv, dict) and _coerce_bool(gv.get("valid", True), default=True):
+                live = _coerce_bool(gv.get("logical", 0))
+            entities.append(
+                _entity(
+                    platform="binary_sensor",
+                    unique_id=uid,
+                    name=f"CAN M{module_id} GPIO {gpio}",
+                    module_id=module_id,
+                    value=live,
+                    attributes={
+                        "module_id": module_id,
+                        "gpio": gpio,
+                        "raw": gv.get("raw") if isinstance(gv, dict) else None,
+                        "role": role_code,
+                        "index": info.get("index"),
+                    },
+                )
+            )
 
     mcp_input_state = rt.get("mcp_input_state") if isinstance(rt.get("mcp_input_state"), dict) else {}
 
@@ -726,6 +824,7 @@ def build_entities_for_module(mod: dict[str, Any]) -> list[dict[str, Any]]:
         if not is_binary and role_name != "Button":
             continue
         uid = f"m{module_id}_gpio{gpio}_binary"
+        # De-dupe by unique_id later; gpio_values wins over role-only stubs.
         entities.append(
             _entity(
                 platform="binary_sensor",
