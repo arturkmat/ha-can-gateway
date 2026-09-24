@@ -1,6 +1,6 @@
 # CAN Gateway — Home Assistant Supervisor Add-on
 
-Supervisor add-on **5.0.37** for Dark-Smart CAN bus automation. It owns the USB/CAN adapter (SLCAN, 125 kbit/s), exposes a web panel (Ingress), REST API, and **automatically installs and configures** the `can_gateway_v3` integration (manifest **5.0.37**).
+Supervisor add-on **5.0.38** for Dark-Smart CAN bus automation. It owns the USB/CAN adapter (SLCAN, 125 kbit/s), exposes a web panel (Ingress), REST API, and **automatically installs and configures** the `can_gateway_v3` integration (manifest **5.0.38**).
 
 ## Quick start (Home Assistant OS)
 

@@ -23,7 +23,7 @@ from protocol_constants import (
     SHIFT595_RELAY_BASE_INDEX,
     SHIFT595_RELAY_COUNT_PER_REGISTER,
     UNKNOWN_MODULE_IDS,
-    can_v2_config_request_id,
+    can_v2_config_request_id_for_command,
     can_v2_ota_data_id,
 )
 
@@ -1072,7 +1072,9 @@ class BusManager:
         if args:
             for i, val in enumerate(args[:6]):
                 payload[2 + i] = int(val) & 0xFF
-        return self.send_raw(can_v2_config_request_id(int(module_id)), payload)
+        mid = int(module_id)
+        cmd = int(command)
+        return self.send_raw(can_v2_config_request_id_for_command(mid, cmd), payload)
 
     def send_raw(self, can_id: int, data: list[int]) -> bool:
         if not self.ensure_bus():

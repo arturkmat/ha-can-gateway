@@ -52,6 +52,17 @@ def can_v2_config_request_id(module_id: int) -> int:
     return can_v2_frame_id(CAN_V2_CLASS_CONFIG_REQUEST, module_id)
 
 
+def can_v2_config_request_id_for_command(target_module_id: int, command: int) -> int:
+    """Arbitration ID for PC→module CONFIG_REQUEST — always broadcast 0x7F8.
+
+    Target module is in payload[0]. Unicast ``(id<<3)|0`` is rejected by some
+    ESP32-C6 dual-TWAI filter layouts and by CAN hubs that only forward the
+    broadcast CONFIG window; firmware accepts broadcast via ``twai_rx_should_drop``.
+    """
+    del target_module_id, command
+    return can_v2_config_request_id(CAN_V3_BROADCAST_MODULE_ID)
+
+
 def can_v2_config_response_id(module_id: int) -> int:
     return can_v2_frame_id(CAN_V2_CLASS_CONFIG_RESPONSE, module_id)
 

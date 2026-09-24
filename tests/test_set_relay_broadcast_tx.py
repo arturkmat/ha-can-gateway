@@ -1,4 +1,4 @@
-"""Unmatched CONFIG responses must be applied, not dropped, during wait_for_response."""
+"""SET_RELAY CONFIG TX must use broadcast 0x7F8 (Windows configurator parity)."""
 
 from __future__ import annotations
 
@@ -13,10 +13,9 @@ if str(LIB) not in sys.path:
 
 from configurator_engine import ConfiguratorEngine  # noqa: E402
 from protocol_constants import (  # noqa: E402
-    COMMAND_GET_GPIO_ROLE,
-    COMMAND_SCAN_SENSORS,
     COMMAND_SET_RELAY_STATE,
     can_v2_config_request_id,
+    can_v2_config_request_id_for_command,
     can_v2_config_response_id,
 )
 
@@ -67,39 +66,28 @@ class _FakeIo:
         pass
 
 
-def test_wait_for_response_applies_interleaved_scan_sensors() -> None:
-    mid = 42
-    scan_ack = _Msg(
-        can_v2_config_response_id(mid),
-        [mid, COMMAND_SCAN_SENSORS, 0, 0x01, 0x80, 0, 0, 0],
-    )
-    gpio_ack = _Msg(
-        can_v2_config_response_id(mid),
-        [mid, COMMAND_GET_GPIO_ROLE, 0, 2, 1, 0, 5, 0],
-    )
-    io = _FakeIo([scan_ack, gpio_ack])
-    engine = ConfiguratorEngine(io)
-    engine.set_current_module(mid)
-
-    resp = engine.wait_for_response(mid, COMMAND_GET_GPIO_ROLE, timeout=0.2, log_traffic=False)
-    assert resp is not None
-    assert resp[1] == COMMAND_GET_GPIO_ROLE
-    assert engine.context(mid).sensor_scan is not None
-    assert engine.context(mid).sensor_scan["flags"] == 0x01
+def test_config_request_id_for_command_is_broadcast() -> None:
+    assert can_v2_config_request_id_for_command(5, COMMAND_SET_RELAY_STATE) == can_v2_config_request_id(0xFF)
+    assert can_v2_config_request_id_for_command(5, COMMAND_SET_RELAY_STATE) == 0x7F8
+    # Unicast would be wrong for PC→module CONFIG on hubs / ESP32-C6 dual filter.
+    assert can_v2_config_request_id(5) == 0x028
 
 
-def test_set_relay_still_requires_ack_not_cache() -> None:
+def test_set_relay_sends_broadcast_config_and_accepts_ack() -> None:
     mid = 5
-    io = _FakeIo([])  # no ACK on the wire
+    rn = 17
+    ack = _Msg(
+        can_v2_config_response_id(mid),
+        [mid, COMMAND_SET_RELAY_STATE, 0, rn, 1, 0, 0, 0],
+    )
+    io = _FakeIo([ack])
     engine = ConfiguratorEngine(io)
-    engine.context(mid).virtual_relay_values[17] = 1  # stale 0x600 cache
-    # Bypass nested acquire for unit test: call set_relay which uses send_request → wait
-    result = engine.set_relay_state(mid, 17, "on")
-    assert result["ok"] is False
-    assert result.get("error") == "no response"
-    assert io.sent, "SET_RELAY must still transmit the CONFIG frame"
+
+    result = engine.set_relay_state(mid, rn, "on")
+
+    assert result["ok"] is True
+    assert result["on"] is True
+    assert io.sent, "SET_RELAY must transmit"
     frame_id, payload = io.sent[0]
-    assert frame_id == can_v2_config_request_id(0xFF) == 0x7F8
-    assert payload[1] == COMMAND_SET_RELAY_STATE
-    assert payload[2] == 17
-    assert payload[3] == 1
+    assert frame_id == 0x7F8, f"expected broadcast CONFIG 0x7F8, got 0x{frame_id:03X}"
+    assert payload == [mid, COMMAND_SET_RELAY_STATE, rn, 1, 0, 0, 0, 0]

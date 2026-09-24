@@ -59,6 +59,7 @@ from protocol_constants import (
     UNKNOWN_MODULE_IDS,
     build_shutter_control_payload,
     can_v2_config_request_id,
+    can_v2_config_request_id_for_command,
     can_v2_control_command_id,
     can_v2_frame_class,
     can_v2_frame_module_id,
@@ -737,7 +738,9 @@ class ConfiguratorEngine:
         if acquired:
             self._io_acquire()
         try:
-            self._secure_bus_send(target_id, can_v2_config_request_id(target_id), payload, log_traffic=log_traffic)
+            # Same as Windows configurator: CONFIG TX on broadcast 0x7F8, target in payload[0].
+            req_can_id = can_v2_config_request_id_for_command(target_id, command)
+            self._secure_bus_send(target_id, req_can_id, payload, log_traffic=log_traffic)
             return self.wait_for_response(target_id, command, timeout=timeout, log_traffic=log_traffic)
         finally:
             if acquired:

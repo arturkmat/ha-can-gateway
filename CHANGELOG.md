@@ -1,5 +1,14 @@
 # Changelog — ha-can-gateway
 
+## 2026-09-24 (add-on + integration v5.0.38)
+
+### fix: SET_RELAY / CONFIG TX na broadcast 0x7F8 (parity z konfiguratorem Windows)
+- **Przyczyna „no CONFIG ACK: no response”:** `ConfiguratorEngine.send_request` i `BusManager.send_config` wysyłały CONFIG_REQUEST unicastem `(module_id<<3)|0` (np. moduł 5 → `0x028`). Konfigurator Windows od dawna używa **`can_v2_config_request_id_for_command` → zawsze `0x7F8`**, cel w `payload[0]` — unicast bywa odcinany na ESP32-C6 (dual TWAI) / hubach CAN.
+- **Fix:** ta sama funkcja w `protocol_constants.py`; `send_request` / `send_config` TX na `0x7F8`. Sukces nadal tylko przy realnym CONFIG ACK (bez fake-ok z cache 0x600).
+- **Ramka SET_RELAY:** ID `0x7F8`, data `[module_id, 59, relay_no, state, 0,0,0,0]`; ACK: class RESPONSE, `[module_id, 59, status=0, relay_no, on/off, …]`.
+- **Wersja:** **5.0.38**.
+- **Testy:** `test_set_relay_broadcast_tx.py` (regresja unicast vs broadcast).
+
 ## 2026-09-24 (add-on + integration v5.0.37)
 
 ### fix: katalog encji po skanie — rolety / binary_sensor / sensor + realny SET_RELAY
