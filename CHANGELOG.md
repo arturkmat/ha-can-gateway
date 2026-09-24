@@ -1,5 +1,13 @@
 # Changelog — ha-can-gateway
 
+## 2026-09-24 (add-on + integration v5.0.39)
+
+### fix: SET_RELAY bez CONFIG ACK, gdy telemetria potwierdza stan
+- Przekaźnik zmieniał stan, a HA zgłaszało `Relay command failed (no CONFIG ACK): no response`. Ramka docierała, ale ACK bywał niewidoczny (albo gubiony przez wątek RX, który zdążył odczytać ramkę i przy wyłączonym `_rx_enabled` ją odrzucał). Stan encji wskakiwał dopiero na kolejnym pollu katalogu (~5 s) z telemetrii `0x600`/`0x602`.
+- **RX:** ramka odebrana w trakcie komendy trafia do kolejki waitera, zamiast zostać odrzucona.
+- **SET_RELAY:** brak ACK nie jest sukcesem ze starego cache `0x600`. Po timeout ACK nasłuch do **2,5 s** na świeżą telemetrię przekaźników; sukces natychmiast gdy bit zgadza się z on/off (warning w logu). Przeciwny bit lub brak świeżej ramki → nadal `no response`.
+- **Wersja:** **5.0.39**.
+
 ## 2026-09-24 (add-on + integration v5.0.38)
 
 ### fix: SET_RELAY / CONFIG TX na broadcast 0x7F8 (parity z konfiguratorem Windows)

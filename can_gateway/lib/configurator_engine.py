@@ -114,6 +114,7 @@ class ModuleContext:
     gpio_info: dict[int, dict[str, Any]] = field(default_factory=dict)
     gpio_values: dict[int, dict[str, Any]] = field(default_factory=dict)
     virtual_relay_values: dict[int, int] = field(default_factory=dict)
+    relay_telemetry_gen: int = 0
     relay_gpio_by_index: dict[int, int] = field(default_factory=dict)
     relay_pulse_ms_by_index: dict[int, int] = field(default_factory=dict)
     shutter_relay_pairs: dict[int, dict[str, int]] = field(default_factory=dict)
@@ -482,6 +483,7 @@ class ConfiguratorEngine:
             return {"ok": False, "error": str(exc), "module_id": mid, "relay_no": rn}
         try:
             try:
+                gen_before = int(self.context(mid).relay_telemetry_gen)
                 resp = self.send_request(
                     mid, COMMAND_SET_RELAY_STATE, [rn, code], timeout=0.75, log_traffic=False
                 )
@@ -495,6 +497,34 @@ class ConfiguratorEngine:
                 )
                 return {"ok": False, "error": str(exc), "module_id": mid, "relay_no": rn}
             if resp is None:
+                # ACK often missing on hub paths while the module still toggles and
+                # later publishes 0x600/0x602. Wait for that fresh telemetry (not
+                # the pre-command cache) before declaring failure — HA otherwise
+                # shows turn_on failed and only updates state on the ~5s poll.
+                if self._wait_relay_telemetry_confirm(mid, rn, code, gen_before, timeout_s=2.5):
+                    is_on = bool(int(self.context(mid).virtual_relay_values.get(rn, 0)))
+                    _LOGGER.warning(
+                        "SET_RELAY confirmed by relay telemetry without CONFIG ACK "
+                        "module=%s relay=%s state=%s",
+                        mid,
+                        rn,
+                        state,
+                    )
+                    self._store_relay_state(mid, rn, int(is_on))
+                    if pulse_ms > 0 and code == 1 and is_on:
+                        threading.Timer(
+                            max(0.05, (pulse_ms + 80) / 1000.0), lambda: self._pulse_resync(mid, rn)
+                        ).start()
+                    self._io.notify()
+                    return {
+                        "ok": True,
+                        "module_id": mid,
+                        "relay_no": rn,
+                        "state": state,
+                        "on": is_on,
+                        "pulse_ms": pulse_ms,
+                        "confirmed": "telemetry",
+                    }
                 _LOGGER.error(
                     "SET_RELAY no module ACK module=%s relay=%s state=%s (frame sent, no CONFIG response)",
                     mid,
@@ -559,6 +589,51 @@ class ConfiguratorEngine:
                 self._read_relay_states_via_gpio_map()
             elif ctx.gpio_info:
                 self.read_relay_states_from_module()
+
+    def _relay_state_confirmed_by_telemetry(
+        self, module_id: int, relay_no: int, code: int, gen_before: int
+    ) -> bool:
+        """True only when a relay telemetry frame arrived after the command.
+
+        A cached 0x600/0x602 value from before SET_RELAY must not count: that
+        was the false HTTP 200. The observed bit has to match on/off.
+        """
+        ctx = self.context(module_id)
+        if int(ctx.relay_telemetry_gen) == int(gen_before):
+            return False
+        if int(relay_no) not in ctx.virtual_relay_values:
+            return False
+        observed = int(ctx.virtual_relay_values[int(relay_no)])
+        if int(code) == 2:
+            return True
+        expected = 1 if int(code) == 1 else 0
+        return observed == expected
+
+    def _wait_relay_telemetry_confirm(
+        self,
+        module_id: int,
+        relay_no: int,
+        code: int,
+        gen_before: int,
+        *,
+        timeout_s: float = 2.5,
+    ) -> bool:
+        """Listen for post-command 0x600/0x602; return as soon as bit matches."""
+        if self._relay_state_confirmed_by_telemetry(module_id, relay_no, code, gen_before):
+            return True
+        deadline = time.time() + max(0.0, float(timeout_s))
+        self._io.sync_transport_macs()
+        while time.time() < deadline:
+            if self._relay_state_confirmed_by_telemetry(module_id, relay_no, code, gen_before):
+                return True
+            message = self._safe_recv(min(0.05, max(0.0, deadline - time.time())))
+            if message is None:
+                continue
+            normalized = self._normalize(message)
+            if normalized is None:
+                continue
+            self.handle_can_message(normalized, already_normalized=True)
+        return self._relay_state_confirmed_by_telemetry(module_id, relay_no, code, gen_before)
 
     def relay_pulse_ms_for(self, module_id: int, relay_no: int) -> int:
         ctx = self.context(module_id)
@@ -1249,6 +1324,7 @@ class ConfiguratorEngine:
                     changed = True
                 ctx.gpio_values[gpio] = new_val
 
+        ctx.relay_telemetry_gen = int(ctx.relay_telemetry_gen) + 1
         if changed:
             self._io.notify()
         return changed
@@ -1266,6 +1342,7 @@ class ConfiguratorEngine:
                 on = 1 if (gpb & (1 << (local_pin - 8))) else 0
             relay_index = MCP23017_RELAY_BASE_INDEX + chip_offset * MCP23017_OUTPUT_COUNT + local_pin
             ctx.virtual_relay_values[relay_index] = on
+        ctx.relay_telemetry_gen = int(ctx.relay_telemetry_gen) + 1
         self._io.notify()
         return True
 

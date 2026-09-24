@@ -4,6 +4,7 @@ import glob
 import logging
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -106,6 +107,8 @@ class BusManager:
         self._frame_listeners: list[Callable[[], None]] = []
         self._rx_enabled = threading.Event()
         self._rx_enabled.set()
+        self._rx_hold: deque = deque()
+        self._rx_hold_lock = threading.Lock()
         self._scan_lock = threading.Lock()
         self._reconnect_thread: threading.Thread | None = None
         self._active_port: str | None = None
@@ -813,7 +816,20 @@ class BusManager:
                 _LOGGER.debug("watchdog forced shutdown error", exc_info=True)
         self._mark_bus_activity()
 
+    def _pop_held_rx(self):
+        with self._rx_hold_lock:
+            if self._rx_hold:
+                return self._rx_hold.popleft()
+        return None
+
+    def _hold_rx(self, message) -> None:
+        with self._rx_hold_lock:
+            self._rx_hold.append(message)
+
     def _recv(self, timeout: float):
+        held = self._pop_held_rx()
+        if held is not None:
+            return held
         if self._bus is None:
             return None
         try:
@@ -858,6 +874,10 @@ class BusManager:
 
     def _handle_message(self, message) -> None:
         if not self._rx_enabled.is_set():
+            # Command waiter owns the port. A frame already pulled by the RX
+            # thread (often the CONFIG ACK) must be handed to that waiter,
+            # not dropped — otherwise the relay moves and HA reports no ACK.
+            self._hold_rx(message)
             return
         message = self._normalize_message(message)
         if message is None:

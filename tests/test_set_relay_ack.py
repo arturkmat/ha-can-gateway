@@ -6,7 +6,6 @@ import sys
 import threading
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -58,7 +57,9 @@ class _FakeIo:
         pass
 
 
-def test_set_relay_fails_without_ack_even_if_telemetry_cache_has_relay(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_set_relay_fails_without_ack_even_if_telemetry_cache_has_relay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     io = _FakeIo()
     io.queue_response(None)
     engine = ConfiguratorEngine(io)
@@ -70,10 +71,111 @@ def test_set_relay_fails_without_ack_even_if_telemetry_cache_has_relay(monkeypat
         "send_request",
         lambda *a, **k: io._responses.pop(0) if io._responses else None,
     )
+    monkeypatch.setattr(engine, "_wait_relay_telemetry_confirm", lambda *a, **k: False)
 
     result = engine.set_relay_state(5, 2, "on")
     assert result["ok"] is False
     assert result.get("error") == "no response"
+
+
+def test_set_relay_succeeds_when_fresh_telemetry_matches_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    io = _FakeIo()
+    engine = ConfiguratorEngine(io)
+    ctx = engine.context(5)
+    ctx.virtual_relay_values[17] = 0
+
+    def _send(*_a, **_k):
+        ctx.virtual_relay_values[17] = 1
+        ctx.relay_telemetry_gen += 1
+        return None
+
+    monkeypatch.setattr(engine, "send_request", _send)
+
+    result = engine.set_relay_state(5, 17, "on")
+    assert result["ok"] is True
+    assert result["on"] is True
+    assert result.get("confirmed") == "telemetry"
+
+
+def test_set_relay_succeeds_when_telemetry_arrives_during_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Module may publish 0x600 after the ACK timeout; wait must catch it early."""
+    io = _FakeIo()
+    engine = ConfiguratorEngine(io)
+    ctx = engine.context(5)
+    ctx.virtual_relay_values[17] = 0
+    gen_before = int(ctx.relay_telemetry_gen)
+
+    monkeypatch.setattr(engine, "send_request", lambda *a, **k: None)
+
+    calls = {"n": 0}
+
+    def _wait(mid, rn, code, gen, *, timeout_s=2.5):
+        del mid, code, timeout_s
+        calls["n"] += 1
+        assert gen == gen_before
+        ctx.virtual_relay_values[rn] = 1
+        ctx.relay_telemetry_gen = gen_before + 1
+        return engine._relay_state_confirmed_by_telemetry(5, rn, 1, gen_before)
+
+    monkeypatch.setattr(engine, "_wait_relay_telemetry_confirm", _wait)
+
+    result = engine.set_relay_state(5, 17, "on")
+    assert calls["n"] == 1
+    assert result["ok"] is True
+    assert result.get("confirmed") == "telemetry"
+
+
+def test_set_relay_rejects_fresh_telemetry_that_does_not_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    io = _FakeIo()
+    engine = ConfiguratorEngine(io)
+    ctx = engine.context(5)
+    ctx.virtual_relay_values[17] = 0
+
+    def _send(*_a, **_k):
+        # Fresh frame arrived, but relay bit stayed OFF while we asked ON.
+        ctx.relay_telemetry_gen += 1
+        return None
+
+    monkeypatch.setattr(engine, "send_request", _send)
+    monkeypatch.setattr(engine, "_wait_relay_telemetry_confirm", lambda *a, **k: False)
+
+    result = engine.set_relay_state(5, 17, "on")
+    assert result["ok"] is False
+    assert result.get("error") == "no response"
+
+
+def test_wait_relay_telemetry_confirm_returns_early_on_match() -> None:
+    io = _FakeIo()
+    engine = ConfiguratorEngine(io)
+    ctx = engine.context(5)
+    gen_before = int(ctx.relay_telemetry_gen)
+    ctx.virtual_relay_values[20] = 0
+
+    class _Msg:
+        def __init__(self) -> None:
+            self.arbitration_id = (5 << 3) | 7  # STATE_TELEMETRY
+            # TELE_RELAY_STATE subtype=2, local relays empty, HC595 bit0 = relay 17 on
+            # Actually HC595 starts at 17; for simple path bump gen via apply.
+            self.data = bytes([2, 0, 0, 1, 0, 0, 0, 0])
+
+    # Inject one telemetry frame then silence.
+    frames = [_Msg()]
+
+    def _recv(timeout: float):
+        del timeout
+        return frames.pop(0) if frames else None
+
+    io.recv = _recv  # type: ignore[method-assign]
+    ctx.hw_flags = 0x10  # 1x HC595 register → bits in ext byte map to 17+
+    ok = engine._wait_relay_telemetry_confirm(5, 17, 1, gen_before, timeout_s=0.3)
+    assert ok is True
+    assert int(ctx.relay_telemetry_gen) > gen_before
 
 
 def test_set_relay_succeeds_on_config_ack(monkeypatch: pytest.MonkeyPatch) -> None:

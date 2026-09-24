@@ -10,7 +10,7 @@ Jedno repozytorium dla całego stacku Home Assistant CAN Gateway:
 
 |---------|------|
 
-| `can_gateway/` | Dodatek Supervisor **5.0.38** (SLCAN, panel skanu, REST :8099, katalog encji) |
+| `can_gateway/` | Dodatek Supervisor **5.0.39** (SLCAN, panel skanu, REST :8099, katalog encji) |
 
 | `can_gateway/integration/can_gateway_v3/` | Integracja bundlowana w dodatku (auto-deploy przy starcie) |
 
