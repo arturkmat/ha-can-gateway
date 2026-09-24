@@ -71,6 +71,19 @@ def can_v2_control_command_id(module_id: int) -> int:
     return can_v2_frame_id(CAN_V2_CLASS_CONTROL_COMMAND, module_id)
 
 
+def can_v2_control_command_id_for_pc_shutter(target_module_id: int) -> int:
+    """Arbitration ID for PC→module shutter CONTROL — always broadcast 0x7FA.
+
+    Target module is in payload[4]. Unicast ``(id<<3)|2`` is the Windows USB-CAN
+    GUI path (direct bus), but HA reaches modules via hub HOST/SLCAN where that
+    unicast window is dropped — same class of failure as unicast CONFIG before
+    ``can_v2_config_request_id_for_command`` → 0x7F8. Firmware F1 accepts
+    0x7FA; ``handle_shutter_command`` filters by payload[4].
+    """
+    del target_module_id
+    return can_v2_control_command_id(CAN_V3_BROADCAST_MODULE_ID)
+
+
 def can_v2_ota_data_id(module_id: int) -> int:
     return can_v2_frame_id(CAN_V2_CLASS_OTA_DATA, module_id)
 
@@ -625,16 +638,29 @@ SHUTTER_CMD_STOP = 3
 SHUTTER_CMD_SET_POSITION = 4
 
 
-def build_shutter_control_payload(shutter_no: int, command: int, param: int = 0) -> list[int]:
-    """V3 CONTROL_COMMAND payload: [subtype, shutter_no, command, param, 0, 0, 0, 0]."""
-    target = max(0, min(100, int(param)))
-    param_byte = target if int(command) == SHUTTER_CMD_SET_POSITION else 0
+def build_shutter_control_payload(
+    shutter_no: int,
+    command: int,
+    param: int = 0,
+    *,
+    target_module_id: int = 0,
+) -> list[int]:
+    """V3 shutter CONTROL payload.
+
+    ``[subtype, shutter_no, command, param, target_module_id, 0, 0, 0]``
+
+    - Unicast (Windows GUI): ``target_module_id`` may be 0; arbitration carries the module.
+    - Broadcast 0x7FA (HA / hub HOST): ``target_module_id`` must be the destination
+      module (firmware ignores the frame when payload[4] mismatches).
+    """
+    pos = max(0, min(100, int(param)))
+    param_byte = pos if int(command) == SHUTTER_CMD_SET_POSITION else 0
     return [
         V2_CTRL_SHUTTER_CMD,
         int(shutter_no),
         int(command),
         param_byte,
-        0,
+        int(target_module_id) & 0xFF,
         0,
         0,
         0,

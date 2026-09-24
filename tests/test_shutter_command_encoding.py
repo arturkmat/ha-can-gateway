@@ -1,4 +1,4 @@
-"""Shutter CONTROL_COMMAND payload and add-on routing tests."""
+"""Shutter CONTROL_COMMAND TX must match PC→module broadcast encoding (0x7FA)."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ _pc_spec.loader.exec_module(_pc_mod)
 sys.modules["protocol_constants"] = _pc_mod
 
 from protocol_constants import (  # noqa: E402
+    CAN_V3_BROADCAST_MODULE_ID,
     SHUTTER_CMD_CLOSE,
     SHUTTER_CMD_OPEN,
     SHUTTER_CMD_SET_POSITION,
@@ -28,16 +29,19 @@ from protocol_constants import (  # noqa: E402
     V2_CTRL_SHUTTER_CMD,
     build_shutter_control_payload,
     can_v2_control_command_id,
+    can_v2_control_command_id_for_pc_shutter,
+    can_v2_frame_class,
+    can_v2_frame_module_id,
 )
 
 
 def test_build_shutter_control_payload_open():
-    assert build_shutter_control_payload(1, SHUTTER_CMD_OPEN, 0) == [
+    assert build_shutter_control_payload(1, SHUTTER_CMD_OPEN, 0, target_module_id=201) == [
         V2_CTRL_SHUTTER_CMD,
         1,
         SHUTTER_CMD_OPEN,
         0,
-        0,
+        201,
         0,
         0,
         0,
@@ -45,12 +49,12 @@ def test_build_shutter_control_payload_open():
 
 
 def test_build_shutter_control_payload_stop():
-    assert build_shutter_control_payload(2, SHUTTER_CMD_STOP, 0) == [
+    assert build_shutter_control_payload(2, SHUTTER_CMD_STOP, 0, target_module_id=5) == [
         V2_CTRL_SHUTTER_CMD,
         2,
         SHUTTER_CMD_STOP,
         0,
-        0,
+        5,
         0,
         0,
         0,
@@ -58,17 +62,21 @@ def test_build_shutter_control_payload_stop():
 
 
 def test_build_shutter_control_payload_position_clamps_param():
-    assert build_shutter_control_payload(2, SHUTTER_CMD_SET_POSITION, 150)[3] == 100
-    assert build_shutter_control_payload(2, SHUTTER_CMD_CLOSE, 99)[3] == 0
+    assert build_shutter_control_payload(2, SHUTTER_CMD_SET_POSITION, 150, target_module_id=5)[3] == 100
+    assert build_shutter_control_payload(2, SHUTTER_CMD_CLOSE, 99, target_module_id=5)[3] == 0
 
 
-def test_control_command_can_id_class_bits():
-    can_id = can_v2_control_command_id(201)
-    assert can_id & 0x07 == 2
-    assert (can_id >> 3) & 0xFF == 201
+def test_pc_shutter_can_id_is_broadcast_not_unicast():
+    can_id = can_v2_control_command_id_for_pc_shutter(201)
+    assert can_id == 0x7FA
+    assert can_v2_frame_module_id(can_id) == CAN_V3_BROADCAST_MODULE_ID
+    assert can_v2_frame_class(can_id) == 2
+    # Unicast-only encoding must not be used for HA/PC→module shutter TX.
+    assert can_id != can_v2_control_command_id(201)
+    assert can_v2_control_command_id(201) == 0x64A  # (201<<3)|2 — hub HOST drops this
 
 
-def test_configurator_engine_uses_v3_shutter_payload(monkeypatch):
+def test_configurator_engine_uses_broadcast_shutter_payload(monkeypatch):
     ce_spec = importlib.util.spec_from_file_location(
         "configurator_engine",
         LIB / "configurator_engine.py",
@@ -113,8 +121,11 @@ def test_configurator_engine_uses_v3_shutter_payload(monkeypatch):
     assert sent
     target, can_id, payload = sent[-1]
     assert target == 201
-    assert can_id == can_v2_control_command_id(201)
-    assert payload == build_shutter_control_payload(1, SHUTTER_CMD_CLOSE, 0)
+    assert can_id == 0x7FA
+    assert can_id != can_v2_control_command_id(201)
+    assert payload == build_shutter_control_payload(1, SHUTTER_CMD_CLOSE, 0, target_module_id=201)
+    assert payload[0] == V2_CTRL_SHUTTER_CMD
+    assert payload[4] == 201
 
 
 def test_configurator_engine_stop_command(monkeypatch):
@@ -162,8 +173,8 @@ def test_configurator_engine_stop_command(monkeypatch):
     assert sent
     target, can_id, payload = sent[-1]
     assert target == 201
-    assert can_id == can_v2_control_command_id(201)
-    assert payload == build_shutter_control_payload(2, SHUTTER_CMD_STOP, 0)
+    assert can_id == 0x7FA
+    assert payload == build_shutter_control_payload(2, SHUTTER_CMD_STOP, 0, target_module_id=201)
 
 
 def test_configurator_engine_rejects_invalid_command():
@@ -193,15 +204,21 @@ def test_addon_setup_routes_control_before_config_reboot():
 
     module_id = 201
     shutter_no = 1
-    can_id = protocol.can_v2_control_command_id(module_id)
-    data = protocol.build_shutter_control_payload(shutter_no, protocol.SHUTTER_CMD_OPEN, 0)
+    can_id = protocol.can_v2_control_command_id_for_pc_shutter(module_id)
+    data = protocol.build_shutter_control_payload(
+        shutter_no, protocol.SHUTTER_CMD_OPEN, 0, target_module_id=module_id
+    )
 
-    assert protocol.can_v2_frame_module_id(can_id) == module_id
+    assert protocol.can_v2_frame_module_id(can_id) == protocol.CAN_V3_BROADCAST_MODULE_ID
+    assert can_id == 0x7FA
     assert (can_id & 0x07) == protocol.CAN_V2_CLASS_CONTROL_COMMAND
     assert data[0] == protocol.V2_CTRL_SHUTTER_CMD
     assert data[1] == shutter_no
     assert data[2] == protocol.SHUTTER_CMD_OPEN
-    stop_data = protocol.build_shutter_control_payload(shutter_no, protocol.SHUTTER_CMD_STOP, 0)
+    assert data[4] == module_id
+    stop_data = protocol.build_shutter_control_payload(
+        shutter_no, protocol.SHUTTER_CMD_STOP, 0, target_module_id=module_id
+    )
     assert stop_data[2] == protocol.SHUTTER_CMD_STOP
     assert stop_data[3] == 0
     # Old bug: data[0]==1 and data[1]==1 looked like reboot(module_id=1)

@@ -60,7 +60,7 @@ from protocol_constants import (
     build_shutter_control_payload,
     can_v2_config_request_id,
     can_v2_config_request_id_for_command,
-    can_v2_control_command_id,
+    can_v2_control_command_id_for_pc_shutter,
     can_v2_frame_class,
     can_v2_frame_module_id,
 )
@@ -444,10 +444,14 @@ class ConfiguratorEngine:
         sid = int(shutter_no)
         if sid < 1 or sid > MAX_SHUTTERS:
             return {"ok": False, "error": "invalid shutter_no", "module_id": mid}
-        payload = build_shutter_control_payload(sid, cmd, param)
+        # Broadcast 0x7FA + target in payload[4] (hub HOST / dual TWAI F1).
+        # No CONFIG ACK — firmware publishes TELE_SHUTTER_STATUS; match Windows
+        # GUI: send, listen briefly, return ok.
+        payload = build_shutter_control_payload(sid, cmd, param, target_module_id=mid)
+        can_id = can_v2_control_command_id_for_pc_shutter(mid)
         self._io_acquire()
         try:
-            self._secure_bus_send(mid, can_v2_control_command_id(mid), payload, log_traffic=False)
+            self._secure_bus_send(mid, can_id, payload, log_traffic=False)
             deadline = time.time() + 0.45
             while time.time() < deadline:
                 message = self._safe_recv(min(0.05, max(0.0, deadline - time.time())))

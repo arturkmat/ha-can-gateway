@@ -100,15 +100,21 @@ SHUTTER_CMD_STOP = 3
 SHUTTER_CMD_SET_POSITION = 4
 
 
-def build_shutter_control_payload(shutter_no: int, command: int, param: int = 0) -> list[int]:
-    target = max(0, min(100, int(param)))
-    param_byte = target if int(command) == SHUTTER_CMD_SET_POSITION else 0
+def build_shutter_control_payload(
+    shutter_no: int,
+    command: int,
+    param: int = 0,
+    *,
+    target_module_id: int = 0,
+) -> list[int]:
+    pos = max(0, min(100, int(param)))
+    param_byte = pos if int(command) == SHUTTER_CMD_SET_POSITION else 0
     return [
         V2_CTRL_SHUTTER_CMD,
         int(shutter_no),
         int(command),
         param_byte,
-        0,
+        int(target_module_id) & 0xFF,
         0,
         0,
         0,
@@ -141,6 +147,12 @@ def can_v2_config_response_id(module_id: int) -> int:
 
 def can_v2_control_command_id(module_id: int) -> int:
     return can_v2_frame_id(CAN_V2_CLASS_CONTROL_COMMAND, module_id)
+
+
+def can_v2_control_command_id_for_pc_shutter(target_module_id: int) -> int:
+    """PC→module shutter CONTROL — always broadcast 0x7FA; target in payload[4]."""
+    del target_module_id
+    return can_v2_control_command_id(CAN_V3_BROADCAST_MODULE_ID)
 
 
 def can_v2_ota_data_id(module_id: int) -> int:

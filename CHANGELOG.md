@@ -1,5 +1,14 @@
 # Changelog — ha-can-gateway
 
+## 2026-09-24 (add-on + integration v5.0.40)
+
+### fix: cover / shutter TX na broadcast 0x7FA (parity z hub HOST path)
+- **Przyczyna:** po v5.0.38/39 przełączniki działają (SET_RELAY na `0x7F8`), ale rolety nadal nie jeździły. `set_shutter_command` wysyłał unicast CONTROL `(module_id<<3)|2` (np. moduł 201 → `0x64A`) z payloadem `[1, sht, cmd, param,…]`. Ta sama klasa IDs jest odcinana na ścieżce Pi→hub HOST/SLCAN / dual TWAI F1 — Windows USB-CAN na magistrali nadal widzi unicast.
+- **Fix (add-on):** TX **`0x7FA`**, data `[V2_CTRL_SHUTTER_CMD=1, shutter_no, cmd, param, target_module_id, 0,0,0]`. Bez czekania na CONFIG ACK (firmware i tak go nie wysyła) — krótki nasłuch telemetrii i `ok: true` jak GUI konfiguratora.
+- **Firmware:** na broadcast SHUTTER_CMD wymaga `payload[4] == module_id` (inaczej wszystkie moduły z tym `shutter_no` by ruszyły). Unicast Windows bez zmian.
+- **Wersja:** **5.0.40**.
+- **Testy:** `test_shutter_command_encoding.py` blokuje unicast-only / zły subtype.
+
 ## 2026-09-24 (add-on + integration v5.0.39)
 
 ### fix: SET_RELAY bez CONFIG ACK, gdy telemetria potwierdza stan

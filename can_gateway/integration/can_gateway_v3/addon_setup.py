@@ -36,6 +36,7 @@ from .coordinator import CanGatewayCoordinator
 from .protocol import (
     CAN_V2_CLASS_CONFIG_REQUEST,
     CAN_V2_CLASS_CONTROL_COMMAND,
+    CAN_V3_BROADCAST_MODULE_ID,
     V2_CTRL_SHUTTER_CMD,
     can_v2_frame_module_id,
 )
@@ -208,6 +209,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             and int(data[0]) == V2_CTRL_SHUTTER_CMD
         ):
             module_id = can_v2_frame_module_id(can_id)
+            if module_id == CAN_V3_BROADCAST_MODULE_ID and len(data) >= 5 and int(data[4]) not in (0, 0xFF):
+                module_id = int(data[4])
             cmd_map = {1: "open", 2: "close", 3: "stop", 4: "position"}
             command = cmd_map.get(int(data[2]), "stop")
             param = int(data[3]) if int(data[2]) == 4 else 0

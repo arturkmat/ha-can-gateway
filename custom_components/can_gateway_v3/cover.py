@@ -18,7 +18,7 @@ from .protocol import (
     SHUTTER_CMD_SET_POSITION,
     SHUTTER_CMD_STOP,
     build_shutter_control_payload,
-    can_v2_control_command_id,
+    can_v2_control_command_id_for_pc_shutter,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -169,9 +169,14 @@ class CanGatewayCover(CoverEntity):
                 result.get("error", result),
             )
 
-        payload = build_shutter_control_payload(shutter_no, command, param)
+        payload = build_shutter_control_payload(
+            shutter_no,
+            command,
+            param,
+            target_module_id=self._desc.module_id,
+        )
         await self._can_send(
-            can_v2_control_command_id(self._desc.module_id),
+            can_v2_control_command_id_for_pc_shutter(self._desc.module_id),
             payload,
             False,
             False,
