@@ -129,6 +129,29 @@ class CanGatewayAddonClient:
         ) as resp:
             return await resp.json()
 
+    async def upload_ota(self, module_id: int, firmware: bytes) -> dict[str, Any]:
+        """Upload firmware via add-on POST /api/modules/{id}/ota/upload (multipart)."""
+        form = aiohttp.FormData()
+        form.add_field(
+            "firmware",
+            firmware,
+            filename="firmware.bin",
+            content_type="application/octet-stream",
+        )
+        async with self._session.post(
+            f"{self.base_url}/api/modules/{int(module_id)}/ota/upload",
+            data=form,
+            timeout=aiohttp.ClientTimeout(total=600),
+        ) as resp:
+            try:
+                payload = await resp.json()
+            except aiohttp.ContentTypeError:
+                text = await resp.text()
+                return {"ok": False, "error": f"HTTP {resp.status}: {text[:200]}"}
+            if isinstance(payload, dict):
+                return payload
+            return {"ok": False, "error": f"unexpected response HTTP {resp.status}"}
+
 
 def _slug_matches(candidate: str, slug: str) -> bool:
     candidate = candidate.strip().lower()

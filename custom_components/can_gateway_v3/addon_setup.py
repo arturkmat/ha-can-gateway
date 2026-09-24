@@ -27,6 +27,7 @@ from .const import (
     CONF_SCAN_ON_SETUP,
     DATA_ADDON_CLIENT,
     DATA_CAN_SEND,
+    DATA_REFRESH_CATALOG,
     DOMAIN,
     PLATFORMS,
 )
@@ -182,8 +183,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
                 entities_payload = await client.get_entities()
             catalog_applied = await _apply_catalog(discovery, entities_payload)
-            if catalog_applied:
-                await _reload_platforms()
+            # Always rebuild HA platforms when discovery_version changes so
+            # removed catalog entities (covers, lights, …) disappear without a
+            # Core restart — not only when a non-empty catalog was applied.
+            await _reload_platforms()
+            if not catalog_applied:
+                _LOGGER.info(
+                    "Add-on discovery v%s applied with empty catalog — HA entities pruned",
+                    version_int,
+                )
         except Exception:  # noqa: BLE001
             _LOGGER.debug("Add-on discovery poll failed", exc_info=True)
 
@@ -245,6 +253,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
 
     runtime_data[DATA_CAN_SEND] = _send_can
+
+    async def _refresh_catalog() -> None:
+        """Force discovery+entity pull after an add-on scan/refresh (buttons/services)."""
+        nonlocal last_discovery_version
+        # Reset so a same-tick version bump after scan is always observed.
+        last_discovery_version = None
+        await _poll_discovery()
+        await _poll_entities()
+
+    runtime_data[DATA_REFRESH_CATALOG] = _refresh_catalog
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = runtime_data
     _register_services(hass, entry, _send_can)
 

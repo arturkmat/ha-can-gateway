@@ -6,12 +6,6 @@ import logging
 import re
 from typing import Any
 
-from .const import (
-    EVENT_RELAY,
-    EVENT_RELAY_MCP23017,
-    EVENT_SHUTTER,
-    MCP23017_RELAY_CAN_BASE,
-)
 from .coordinator import CanGatewayCoordinator, EntityDescription
 
 _LOGGER = logging.getLogger(__name__)
@@ -152,8 +146,8 @@ def _sync_module_metadata(
                 "mac": info.mac or "00:00:00:00:00:00",
             }
         )
-        if not catalog_only:
-            coordinator._touch_module_presence(module_id)
+        # Presence / online binary sensors come only from the add-on catalog —
+        # do not synthesize entities here (even when catalog_only=False).
 
         rt = mod.get("runtime")
         if isinstance(rt, dict):

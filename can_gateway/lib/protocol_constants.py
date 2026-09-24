@@ -186,6 +186,7 @@ GPIO_ASSIGNMENT_CHOICES = [
     "74HC595 LATCH",
     "74HC595 OE",
     "MCP23017 RESET",
+    "WS2812B (taśma LED)",
 ]
 
 SHIFT595_RELAY_BASE_INDEX = 17
@@ -505,12 +506,12 @@ COMMAND_SET_SHUTTER_BIND_ROUTE       = 93  # args: source_shutter_idx, trigger_k
 COMMAND_CLEAR_SHUTTER_BIND_ROUTES    = 94  # clear shutter source routes
 COMMAND_GET_SHUTTER_BIND_ROUTE_COUNT = 95  # resp: count, max
 COMMAND_GET_SHUTTER_BIND_ROUTE       = 96  # arg: index -> resp: source_shutter_idx, trigger_kind, trigger_value, target_module_id, target_relay
-COMMAND_SET_SENSOR_BIND_ROUTE        = 97  # args: sensor_kind, sensor_idx, threshold_u8, target_module_id, target_relay
+COMMAND_SET_SENSOR_BIND_ROUTE        = 97  # args: sensor_index|type<<4, compare|(state<<4), threshold LE, target_module, relay
 COMMAND_CLEAR_SENSOR_BIND_ROUTES     = 98  # clear sensor threshold routes
 COMMAND_GET_SENSOR_BIND_ROUTE_COUNT  = 99  # resp: count, max
-COMMAND_GET_SENSOR_BIND_ROUTE        = 100  # arg: index -> resp: sensor_kind, sensor_idx, threshold_u8, target_module_id, target_relay
-COMMAND_SET_NTC_PARAMS               = 101  # args: sensor_idx, r25_lo, r25_hi, beta_lo, beta_hi
-COMMAND_GET_NTC_PARAMS               = 102  # arg: sensor_idx -> resp: sensor_idx, r25_lo, r25_hi, beta_lo, beta_hi
+COMMAND_GET_SENSOR_BIND_ROUTE        = 100  # arg: index -> packed fields (see docs/CAN_PROTOCOL.md)
+COMMAND_SET_NTC_PARAMS               = 101  # args: gpio, rseries_code (0..3), sensor_index (1..8)
+COMMAND_GET_NTC_PARAMS               = 102  # arg: gpio -> resp: gpio, rseries_code, sensor_index, valid
 COMMAND_SET_LED_STRIP_CONFIG         = 109  # wire: (type<<4)|idx, gpio, count_lo/hi, brightness, idle_effect
 COMMAND_GET_LED_STRIP_CONFIG         = 110  # arg: strip_idx; resp: gpio|(type<<7), count, brightness, idle_effect, rgb332|kelvin
 COMMAND_SET_LED_EFFECT               = 111  # new: strip_idx, effect_id, duration_s, r, gb_packed

@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-PKG = REPO / "custom_components" / "can_gateway_v3"
+PKG = Path(__file__).resolve().parents[1] / "custom_components" / "can_gateway_v3"
 
 
 def _load_module(name: str, filename: str, package: str = "can_gateway_v3") -> object:
@@ -31,7 +31,6 @@ const = _load_module("const", "const.py")
 protocol = _load_module("protocol", "protocol.py")
 pkg.const = const
 pkg.protocol = protocol
-parser = _load_module("parser", "parser.py")
 
 
 class TestCanGatewayV3LedBindings(unittest.TestCase):
@@ -59,21 +58,25 @@ class TestCanGatewayV3LedBindings(unittest.TestCase):
         self.assertIn("M3 btn2", text)
         self.assertIn("solid", text)
 
-    def test_parser_config_response_115(self) -> None:
+    def test_unpack_led_binding_fields_115(self) -> None:
         response_data = [0x11, 3, 1, 6, 0x09]
-        decoded = parser._decode_config_response_data(115, response_data)
+        # strip_nibble=1 → strip_index 1; source=3; button=1; meta=6 → effect 1, duration 1
+        decoded = led_protocol.unpack_get_led_binding_response([0, 115, 0, *response_data])
         self.assertEqual(decoded["strip_index"], 1)
         self.assertEqual(decoded["source_module"], 3)
         self.assertEqual(decoded["effect_id"], 1)
         self.assertEqual(decoded["duration_s"], 1)
 
-    def test_parser_config_response_119(self) -> None:
+    def test_unpack_relay_link_fields_119(self) -> None:
         response_data = [2, 3, 5, 7, 1]
-        decoded = parser._decode_config_response_data(119, response_data)
-        self.assertEqual(decoded["src_relay"], 2)
-        self.assertEqual(decoded["trigger"], 3)
-        self.assertEqual(decoded["target_module"], 5)
-        self.assertEqual(decoded["target_relay"], 7)
+        src, trigger, tgt_mod, tgt_rly, tgt_state = protocol.unpack_get_relay_link_fields(
+            response_data
+        )
+        self.assertEqual(src, 2)
+        self.assertEqual(trigger, 3)
+        self.assertEqual(tgt_mod, 5)
+        self.assertEqual(tgt_rly, 7)
+        self.assertEqual(tgt_state, 1)
 
     def test_pack_set_led_binding_args(self) -> None:
         args = led_protocol.pack_set_led_binding_args(
@@ -84,14 +87,16 @@ class TestCanGatewayV3LedBindings(unittest.TestCase):
         self.assertEqual(args[1], 2)
         self.assertEqual(args[4], 5)
 
-    def test_parser_config_response_88(self) -> None:
+    def test_unpack_relay_bind_route_fields_88(self) -> None:
         response_data = [1, 2, 5, 3, 128 + 10]
-        decoded = parser._decode_config_response_data(88, response_data)
-        self.assertEqual(decoded["button"], 1)
-        self.assertEqual(decoded["action"], 2)
-        self.assertEqual(decoded["target_module"], 5)
-        self.assertEqual(decoded["relay"], 3)
-        self.assertEqual(decoded["relay_state"], 138)
+        button, action, tgt_mod, relay, relay_state = protocol.unpack_get_relay_bind_route_fields(
+            response_data
+        )
+        self.assertEqual(button, 1)
+        self.assertEqual(action, 2)
+        self.assertEqual(tgt_mod, 5)
+        self.assertEqual(relay, 3)
+        self.assertEqual(relay_state, 138)
 
 
 if __name__ == "__main__":

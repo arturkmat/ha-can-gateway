@@ -38,6 +38,7 @@ from .const import (
     SERVICE_SET_RELAY_STATE,
     SERVICE_SHUTTER_COMMAND,
 )
+from .ota_upload import upload_firmware_via_addon
 from .led_protocol import (
     LED_EFFECT_OFF,
     LED_EFFECT_SOLID,
@@ -47,7 +48,6 @@ from .led_protocol import (
     pack_set_led_binding_args,
     pack_set_led_effect_args,
 )
-from .ota_upload import upload_firmware_over_can
 from .protocol import (
     BLE_OTA_PIN_MAX_LEN,
     BLE_OTA_PIN_MIN_LEN,
@@ -282,14 +282,20 @@ def _register_services(hass: HomeAssistant, entry: ConfigEntry, send_can) -> Non
         )
 
     async def _handle_start_can_ota(call: ServiceCall) -> None:
+        from .entity_helpers import get_addon_client
+
         module_id = int(call.data[ATTR_MODULE_ID])
         firmware_path = str(call.data["firmware_path"])
         path = Path(firmware_path)
         if not path.is_file():
             _LOGGER.error("start_can_ota: firmware not found: %s", firmware_path)
             return
+        client = get_addon_client(hass, entry)
+        if client is None:
+            _LOGGER.error("start_can_ota: add-on client unavailable")
+            return
         firmware = await hass.async_add_executor_job(path.read_bytes)
-        result = await upload_firmware_over_can(hass, send_can, module_id, firmware)
+        result = await upload_firmware_via_addon(client, module_id, firmware)
         if not result.get("ok"):
             _LOGGER.error("start_can_ota failed: %s", result.get("error", result))
 

@@ -1,5 +1,22 @@
 # Changelog — ha-can-gateway
 
+## 2026-09-24 (add-on + integration v5.0.36)
+
+### fix: HA subordinates to add-on entity catalog (single source of truth)
+- **Scan buttons** (`Gateway Reinitialize / Deep / Refresh / Scan Selected`): call add-on `POST /api/scan` or `POST /api/modules/{id}/refresh`, then force catalog refresh (`GET /api/discovery` + `GET /api/entities` + platform reload). No more raw CAN discovery frames as a second scanner.
+- **OTA** (`start_can_ota`): uploads via add-on `POST /api/modules/{id}/ota/upload` — removed broken HA event-bus wait (`can_request` / local CAN OTA loop).
+- **Dead path removed:** `coordinator.update_from_event` and entity-building `_update_*` handlers; deleted `parser.py` / `can_request.py` and parser-only tests. HA entities are created/updated/pruned only from the add-on catalog (`addon_sync.apply_addon_*`).
+- **Discovery poll:** on `discovery_version` change always reload platforms (also when catalog becomes empty) so covers/lights/stale entities disappear without Core restart.
+- **Version:** add-on + integration **5.0.36**; `tools/sync_addon_integration.ps1`.
+
+## 2026-09-24 (add-on + integration v5.0.35)
+
+### fix: SENSOR_EVENTS — module_id z CAN ID V3 (jak konfigurator)
+- **`configurator_engine.handle_can_message`:** dla `SENSOR_EVENTS` (i fallback CONFIG) preferuj `can_v2_frame_module_id(arb)`; `payload[0]` bywa `0` lub koliduje z `sensor_no` — wcześniej telemetria DS18/I2C/NTC lądowała na złym module w cache.
+- **`protocol_constants.py`:** komentarze `SET/GET_NTC_PARAMS` (gpio + rseries_code), opis trasy 97; `WS2812B` w `GPIO_ASSIGNMENT_CHOICES`.
+- **docs:** README / `can_gateway/README.md` — wersja **5.0.35** (wcześniej stale 5.0.30/5.0.28).
+- **Testy:** `tests/test_sensor_events_module_id.py`.
+
 ## 2026-09-23 (add-on + integration v5.0.34)
 
 ### fix: brak encji cover po skanie gdy GET_SHUTTER_RELAYS timeoutuje przy zajętej magistrali

@@ -369,10 +369,18 @@ class ConfiguratorEngine:
             return False
         payload = list(message.data)
         frame_class = can_v2_frame_class(message.arbitration_id)
-        if frame_class == CAN_V2_CLASS_STATE_TELEMETRY:
-            module_id = can_v2_frame_module_id(message.arbitration_id)
+        if frame_class in (CAN_V2_CLASS_STATE_TELEMETRY, CAN_V2_CLASS_SENSOR_EVENTS):
+            arb_mid = can_v2_frame_module_id(message.arbitration_id)
+            if arb_mid not in UNKNOWN_MODULE_IDS:
+                module_id = arb_mid
+            else:
+                module_id = int(payload[0]) if payload else arb_mid
         else:
             module_id = int(payload[0])
+            if module_id in UNKNOWN_MODULE_IDS:
+                arb_mid = can_v2_frame_module_id(message.arbitration_id)
+                if arb_mid not in UNKNOWN_MODULE_IDS:
+                    module_id = arb_mid
 
         if frame_class == CAN_V2_CLASS_STATE_TELEMETRY and self._is_device_info_telemetry(payload):
             hw = payload[1]
