@@ -40,7 +40,9 @@ if TYPE_CHECKING:
 _SHUTTER_CMD_LABEL = {1: "Otworz", 2: "Zamknij", 3: "Stop"}
 _ACTION_NAME = {code: name for name, code in ACTION_MAP.items()}
 _EDGE_NAME = {code: name for name, code in BINARY_MAPPING_TRIGGER_LABELS.items()}
-_SENSOR_KIND = {1: "DS18B20", 2: "BME280 Temp", 3: "SHT30 Temp", 5: "NTC"}
+_SENSOR_TYPE = {1: "Temperatura (DS18/I2C)", 5: "NTC"}
+_SENSOR_COMPARE = {0: "Powyzej", 1: "Ponizej", 2: "Rowne"}
+_STATE_LABEL = {0: "Wylacz", 1: "Zalacz (permanentne)", 2: "Przelacz", 3: "Impuls przekaznika"}
 
 
 def _read_bindings(bus: BusManager, module_id: int) -> list[tuple[int, int, int, int, int]] | None:
@@ -312,16 +314,30 @@ def read_all_mappings(bus: BusManager, module_id: int) -> dict[str, Any]:
             rr = bus.send_config_and_wait(mid, COMMAND_GET_SENSOR_BIND_ROUTE, [idx], timeout=0.35)
             if rr is None or len(rr) < 8 or int(rr[2]) != 0:
                 continue
-            kind = _SENSOR_KIND.get(int(rr[3]), f"Sensor {int(rr[3])}")
+            packed_idx = int(rr[3])
+            cmp_state = int(rr[4])
+            sensor_idx = packed_idx & 0x0F
+            sensor_type = packed_idx >> 4
+            compare_mode = cmp_state & 0x0F
+            state = (cmp_state >> 4) & 0x03
+            th_raw = int(rr[5])
+            th_deg = th_raw if th_raw < 128 else th_raw - 256
+            threshold_centi = th_deg * 100
+            target_mod = int(rr[6])
+            relay, relay_state = unpack_relay_state_byte(int(rr[7]), cmp_state)
+            if relay_state == 0 and state != 0:
+                relay_state = state
+            kind = _SENSOR_TYPE.get(sensor_type, f"Sensor {sensor_type}")
+            compare_label = _SENSOR_COMPARE.get(compare_mode, f"cmp {compare_mode}")
             rows.append(
                 _row(
-                    button=f"{kind} #{int(rr[4])}",
-                    action=f"> {int(rr[5])}",
-                    receiver="Zdalny",
-                    target_id=str(int(rr[6])),
+                    button=f"{kind} {sensor_idx}",
+                    action=f"{compare_label} {threshold_centi / 100:.0f}°C",
+                    receiver="Zdalny" if target_mod != mid else "Lokalny",
+                    target_id=str(target_mod) if target_mod != mid else "-",
                     target_type="Wartosc sensora",
-                    target=str(int(rr[7])),
-                    state="Zalacz",
+                    target=str(relay),
+                    state=_STATE_LABEL.get(relay_state, format_binding_state_label(relay_state)),
                 )
             )
 

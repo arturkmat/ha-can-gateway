@@ -53,6 +53,7 @@ from .protocol import (
     BLE_OTA_PIN_MIN_LEN,
     CAN_BLE_OTA_PIN_CHUNK,
     COMMAND_IDENTIFY,
+    COMMAND_SET_LED_EFFECT,
     COMMAND_SET_RELAY_STATE,
     RELAY_LINK_TRIGGER_ANY,
     RELAY_LINK_TRIGGER_MIRROR,
@@ -65,6 +66,7 @@ from .protocol import (
     SHUTTER_CMD_STOP,
     V2_CTRL_SHUTTER_CMD,
     can_v2_config_request_id,
+    can_v2_config_request_id_for_command,
     can_v2_control_command_id,
 )
 
@@ -79,7 +81,7 @@ def _register_services(hass: HomeAssistant, entry: ConfigEntry, send_can) -> Non
         module_id = int(call.data[ATTR_MODULE_ID])
         duration = int(call.data.get("duration_s", 5))
         await send_can(
-            can_v2_config_request_id(module_id),
+            can_v2_config_request_id_for_command(module_id, COMMAND_IDENTIFY),
             [module_id, COMMAND_IDENTIFY, duration, 0, 0, 0, 0, 0],
             False,
             False,
@@ -137,8 +139,13 @@ def _register_services(hass: HomeAssistant, entry: ConfigEntry, send_can) -> Non
             strip_index=strip_index,
             strip_type=strip_type,
         )
-        wire = [module_id, 111, *args, 0, 0, 0]
-        await send_can(can_v2_config_request_id(module_id), wire[:8], False, False)
+        wire = [module_id, COMMAND_SET_LED_EFFECT, *args, 0, 0, 0]
+        await send_can(
+            can_v2_config_request_id_for_command(module_id, COMMAND_SET_LED_EFFECT),
+            wire[:8],
+            False,
+            False,
+        )
 
     async def _handle_set_relay_link(call: ServiceCall) -> None:
         module_id = int(call.data[ATTR_MODULE_ID])

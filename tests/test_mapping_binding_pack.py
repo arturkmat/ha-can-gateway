@@ -21,6 +21,15 @@ from protocol_constants import (  # noqa: E402
 )
 
 
+def test_pack_impulse_uses_relay_pulse_flag():
+    from protocol_constants import BINDING_FLAG_USE_RELAY_PULSE, BIND_RELAY_STATE_USE_PULSE, parse_binding_state_label
+
+    assert parse_binding_state_label("Impuls") == (BIND_RELAY_STATE_USE_PULSE, 0)
+    assert parse_binding_state_label("Impuls przekaznika") == (BIND_RELAY_STATE_USE_PULSE, 0)
+    args = pack_set_binding_args(1, 2, 1, 3, BIND_RELAY_STATE_USE_PULSE)
+    assert args == [1, 2, 1, 3, 1, BINDING_FLAG_USE_RELAY_PULSE]
+
+
 def test_format_binding_state_timed_and_permanent():
     assert format_binding_state_label(128 + 15) == "Czasowe 15 min"
     assert format_binding_state_label(1) == "Zalacz (permanentne)"

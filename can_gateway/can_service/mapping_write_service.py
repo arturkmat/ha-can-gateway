@@ -27,11 +27,14 @@ from protocol_constants import (
     COMMAND_SET_SENSOR_BIND_ROUTE,
     COMMAND_SET_SHUTTER_BIND_ROUTE,
     COMMAND_SET_SHUTTER_MAPPING,
+    RELAY_LINK_TRIGGER_ANY,
     RELAY_LINK_TRIGGER_MIRROR,
+    button_relay_command_for_target,
     pack_set_binding_args,
     pack_set_led_binding_args,
     pack_set_relay_bind_route_args,
     pack_set_relay_link_args,
+    pack_set_sensor_bind_route_args,
     parse_binding_state_label,
     binary_edge_mode_from_trigger_label,
     STATE_MAP,
@@ -80,23 +83,44 @@ def apply_button_relay_mapping(
     timed_min: int = 0,
     use_relay_pulse: bool = False,
 ) -> bool:
+    """Same-module → SET_BINDING (16); cross-module → SET_RELAY_BIND_ROUTE (85) on source."""
     src = int(source_module_id)
     tgt = int(target_module_id)
     wire_state = int(relay_state)
+    timed = int(timed_min)
+    pulse = bool(use_relay_pulse)
     if wire_state == BIND_RELAY_STATE_USE_PULSE:
-        use_relay_pulse = True
+        pulse = True
         wire_state = 1
-    if wire_state >= BIND_RELAY_STATE_TIMED_MIN:
-        timed_min = wire_state - BIND_RELAY_STATE_TIMED_MIN
+    elif wire_state >= BIND_RELAY_STATE_TIMED_MIN:
+        timed = wire_state - BIND_RELAY_STATE_TIMED_MIN
         wire_state = 1
+
+    if button_relay_command_for_target(src, tgt) == COMMAND_SET_RELAY_BIND_ROUTE:
+        if pulse:
+            route_state = BIND_RELAY_STATE_USE_PULSE
+        elif timed > 0:
+            route_state = BIND_RELAY_STATE_TIMED_MIN + timed
+        else:
+            route_state = wire_state
+        resp = bus.send_config_and_wait(
+            src,
+            COMMAND_SET_RELAY_BIND_ROUTE,
+            pack_set_relay_bind_route_args(
+                int(button_num), int(action_code), tgt, int(relay_num), route_state
+            ),
+            timeout=1.0,
+        )
+        return resp is not None and len(resp) >= 3 and int(resp[2]) == 0
+
     args = pack_set_binding_args(
         src,
         int(button_num),
         int(action_code),
         int(relay_num),
         wire_state,
-        timed_min=int(timed_min),
-        use_relay_pulse=use_relay_pulse,
+        timed_min=timed,
+        use_relay_pulse=pulse,
     )
     resp = bus.send_config_and_wait(
         tgt,
@@ -104,18 +128,7 @@ def apply_button_relay_mapping(
         args,
         timeout=1.0,
     )
-    if resp is None or len(resp) < 3 or int(resp[2]) != 0:
-        return False
-    if src != tgt:
-        rr = bus.send_config_and_wait(
-            src,
-            COMMAND_SET_BINDING_ROUTE,
-            [int(button_num), int(action_code), tgt],
-            timeout=1.0,
-        )
-        if rr is None or len(rr) < 3 or int(rr[2]) != 0:
-            return False
-    return True
+    return resp is not None and len(resp) >= 3 and int(resp[2]) == 0
 
 
 def apply_button_shutter_mapping(
@@ -156,15 +169,21 @@ def send_mappings(bus: BusManager, module_id: int, rows: list[dict[str, Any]]) -
         return {"ok": False, "error": "invalid module_id"}
 
     has_relay_links = any(str(r.get("kind", r.get("target_type", ""))).lower() in ("relay_link", "link relay") for r in rows)
-    needs_routes = any(
-        str(r.get("receiver", r.get("receiver_type", "Lokalny"))) != "Lokalny"
-        or int(r.get("target_module_id", mid)) != mid
+    has_remote_relay_routes = any(
+        str(r.get("kind", "button_relay")).lower() in ("button_relay", "relay")
+        and int(r.get("target_module_id", mid)) != mid
         for r in rows
-        if str(r.get("kind", "button_relay")) in ("button_relay", "button_shutter", "relay")
+    )
+    has_remote_shutter_routes = any(
+        str(r.get("kind", "")).lower() in ("button_shutter", "shutter")
+        and int(r.get("target_module_id", mid)) != mid
+        for r in rows
     )
     if has_relay_links:
         bus.send_config_and_wait(mid, COMMAND_CLEAR_RELAY_LINKS, timeout=0.5)
-    if needs_routes:
+    if has_remote_relay_routes:
+        bus.send_config_and_wait(mid, COMMAND_CLEAR_RELAY_BIND_ROUTES, timeout=0.5)
+    if has_remote_shutter_routes:
         bus.send_config_and_wait(mid, COMMAND_CLEAR_BINDING_ROUTES, timeout=0.5)
 
     applied = 0
@@ -319,16 +338,35 @@ def send_mappings(bus: BusManager, module_id: int, rows: list[dict[str, Any]]) -
                 continue
 
             if kind == "sensor_route":
+                sensor_idx = int(row.get("sensor_idx", row.get("sensor_index", 1)))
+                sensor_type = int(row.get("sensor_type", row.get("sensor_kind", 1)))
+                compare_mode = int(row.get("compare_mode", 0))
+                if "threshold_centi" in row:
+                    threshold_centi = int(row["threshold_centi"])
+                else:
+                    # Legacy HA field was whole °C — convert to hundredths.
+                    threshold_centi = int(round(float(row.get("threshold", 25)) * 100))
+                tgt_mod = int(row["target_module_id"])
+                tgt_relay = int(row["target_relay"])
+                st_raw = row.get("relay_state", row.get("state", 1))
+                if isinstance(st_raw, str) and not str(st_raw).isdigit():
+                    relay_state, timed_min = parse_binding_state_label(str(st_raw))
+                    if timed_min > 0:
+                        relay_state = BIND_RELAY_STATE_TIMED_MIN + timed_min
+                else:
+                    relay_state = int(st_raw)
                 resp = bus.send_config_and_wait(
                     mid,
                     COMMAND_SET_SENSOR_BIND_ROUTE,
-                    [
-                        int(row.get("sensor_kind", 1)),
-                        int(row.get("sensor_index", 1)),
-                        int(row.get("threshold", 25)) & 0xFF,
-                        int(row["target_module_id"]),
-                        int(row["target_relay"]),
-                    ],
+                    pack_set_sensor_bind_route_args(
+                        sensor_idx,
+                        sensor_type,
+                        compare_mode,
+                        threshold_centi,
+                        tgt_mod,
+                        tgt_relay,
+                        relay_state,
+                    ),
                     timeout=0.8,
                 )
                 if resp and len(resp) >= 3 and int(resp[2]) == 0:

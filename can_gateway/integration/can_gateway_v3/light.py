@@ -23,7 +23,7 @@ from .led_protocol import (
     kelvin_to_byte,
     pack_set_led_effect_args,
 )
-from .protocol import can_v2_config_request_id
+from .protocol import can_v2_config_request_id_for_command
 
 
 async def async_setup_entry(
@@ -150,7 +150,12 @@ class CanGatewayLight(LightEntity):
             effect_id, duration_s, r, g, b, strip_index=strip_index, strip_type=strip_type
         )
         wire = [self._desc.module_id, 111, *args, 0, 0, 0]
-        await self._can_send(can_v2_config_request_id(self._desc.module_id), wire[:8], False, False)
+        await self._can_send(
+            can_v2_config_request_id_for_command(self._desc.module_id, 111),
+            wire[:8],
+            False,
+            False,
+        )
         val = self._light_state()
         val.update({"is_on": effect_id != LED_EFFECT_OFF, "effect": effect_id, "r": r, "g": g, "b": b})
         self._coordinator._set_state(self._attr_unique_id, val, self.extra_state_attributes)

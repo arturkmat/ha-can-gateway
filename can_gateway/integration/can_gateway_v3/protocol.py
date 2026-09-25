@@ -2,6 +2,43 @@
 
 from __future__ import annotations
 
+try:
+    from .protocol_opcodes_gen import *  # noqa: F403,F401  # generated from protocol/commands.yaml
+except ImportError:  # tests load protocol.py as a flat module
+    from protocol_opcodes_gen import *  # noqa: F403,F401
+
+from pathlib import Path as _Path
+import sys as _sys
+_repo = _Path(__file__).resolve().parents[3]
+if not (_repo / "protocol" / "commands.yaml").is_file():
+    _repo = _Path(__file__).resolve().parents[2]
+if str(_repo) not in _sys.path:
+    _sys.path.insert(0, str(_repo))
+from protocol.pack import (  # noqa: E402 — shared packers (phase 3)
+    BIND_FLAG_TIMED_SEC,
+    BIND_FLAG_USE_RELAY_PULSE,
+    BIND_RELAY_STATE_TIMED_MIN,
+    BIND_RELAY_STATE_USE_PULSE,
+    BINDING_FLAG_TIMED,
+    BINDING_FLAG_USE_RELAY_PULSE,
+    assert_tof_requires_timed_state,
+    binding_state_label_to_wire,
+    binding_state_wire_to_label,
+    build_shutter_control_payload,
+    button_relay_command_for_target,
+    can_v2_config_request_id_for_command as _pack_config_req_id_for_command,
+    can_v2_control_command_id_for_pc_shutter,
+    format_binding_state_label,
+    pack_set_binding_args,
+    pack_set_relay_link_args,
+    pack_set_sensor_bind_route_args,
+    parse_binding_state_label,
+    timed_relay_state_wire,
+    unpack_set_binding_arg5,
+    validate_sensor_bind_route_state,
+)
+
+
 CAN_V2_CLASS_CONFIG_REQUEST = 0x00
 CAN_V2_CLASS_CONFIG_RESPONSE = 0x01
 CAN_V2_CLASS_CONTROL_COMMAND = 0x02
@@ -30,37 +67,8 @@ SENSOR_TYPE_NTC = 5
 MODULE_NAME_MAX_LEN = 15
 MODULE_NAME_CHUNK_READ = 3
 
-COMMAND_IDENTIFY = 2
-COMMAND_GET_SUMMARY = 3
-COMMAND_GET_MODULE_NAME = 37
-COMMAND_SET_RELAY_STATE = 59
-COMMAND_OTA_BEGIN = 60
-COMMAND_OTA_SET_TIMESTAMP = 61
-COMMAND_OTA_END = 62
-COMMAND_OTA_ABORT = 63
-COMMAND_OTA_GET_INFO = 64
-COMMAND_SET_RELAY_BIND_ROUTE = 85
-COMMAND_CLEAR_RELAY_BIND_ROUTES = 86
-COMMAND_GET_RELAY_BIND_ROUTE_COUNT = 87
-COMMAND_GET_RELAY_BIND_ROUTE = 88
-COMMAND_BLE_OTA_ENABLE = 103
-COMMAND_SET_BLE_OTA_PIN = 104
-COMMAND_GET_BLE_OTA_PIN_STATE = 105
-COMMAND_SET_LED_BINDING = 112
-COMMAND_CLEAR_LED_BINDINGS = 113
-COMMAND_GET_LED_STRIP_CONFIG = 110
-COMMAND_SET_LED_EFFECT = 111
-COMMAND_GET_LED_BINDING_COUNT = 114
-COMMAND_GET_LED_BINDING = 115
-COMMAND_SET_RELAY_LINK = 116
-COMMAND_CLEAR_RELAY_LINKS = 117
-COMMAND_GET_RELAY_LINK_COUNT = 118
-COMMAND_GET_RELAY_LINK = 119
-COMMAND_REBOOT = 58
-COMMAND_FACTORY_RESET_KEEP_ID = 120
 
-BIND_RELAY_STATE_TIMED_MIN = 128
-BIND_RELAY_STATE_USE_PULSE = 3
+# BIND_* from protocol.pack
 OTA_PAYLOAD_BYTES = 5
 OTA_BATCH_FRAMES = 64
 OTA_STATUS_READY = 0
@@ -100,26 +108,6 @@ SHUTTER_CMD_STOP = 3
 SHUTTER_CMD_SET_POSITION = 4
 
 
-def build_shutter_control_payload(
-    shutter_no: int,
-    command: int,
-    param: int = 0,
-    *,
-    target_module_id: int = 0,
-) -> list[int]:
-    pos = max(0, min(100, int(param)))
-    param_byte = pos if int(command) == SHUTTER_CMD_SET_POSITION else 0
-    return [
-        V2_CTRL_SHUTTER_CMD,
-        int(shutter_no),
-        int(command),
-        param_byte,
-        int(target_module_id) & 0xFF,
-        0,
-        0,
-        0,
-    ]
-
 
 def can_v2_frame_id(frame_class: int, module_id: int) -> int:
     return ((int(module_id) & 0xFF) << 3) | (int(frame_class) & 0x07)
@@ -141,6 +129,11 @@ def can_v2_config_request_id(module_id: int) -> int:
     return can_v2_frame_id(CAN_V2_CLASS_CONFIG_REQUEST, module_id)
 
 
+def can_v2_config_request_id_for_command(target_module_id: int, command: int) -> int:
+    """Arbitration ID CONFIG_REQUEST — broadcast 0x7F8 (shared protocol.pack)."""
+    return _pack_config_req_id_for_command(target_module_id, command)
+
+
 def can_v2_config_response_id(module_id: int) -> int:
     return can_v2_frame_id(CAN_V2_CLASS_CONFIG_RESPONSE, module_id)
 
@@ -149,11 +142,7 @@ def can_v2_control_command_id(module_id: int) -> int:
     return can_v2_frame_id(CAN_V2_CLASS_CONTROL_COMMAND, module_id)
 
 
-def can_v2_control_command_id_for_pc_shutter(target_module_id: int) -> int:
-    """PC→module shutter CONTROL — always broadcast 0x7FA; target in payload[4]."""
-    del target_module_id
-    return can_v2_control_command_id(CAN_V3_BROADCAST_MODULE_ID)
-
+# can_v2_control_command_id_for_pc_shutter imported from protocol.pack
 
 def can_v2_ota_data_id(module_id: int) -> int:
     return can_v2_frame_id(CAN_V2_CLASS_OTA_DATA, module_id)

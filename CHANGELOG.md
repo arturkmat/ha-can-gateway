@@ -1,5 +1,31 @@
 # Changelog — ha-can-gateway
 
+## 2026-09-25 (add-on + integration v5.0.42)
+
+### fix: sensor route 97/100, cross-module 85, IDENTIFY/LED na 0x7F8
+- **`mapping_write_service`:** `SET_SENSOR_BIND_ROUTE` (97) przez `pack_set_sensor_bind_route_args` (packed wire + reject timed 128+N); cross-module button→relay → opcode **85** na źródle (same-module nadal **16**).
+- **`mapping_service`:** `GET_SENSOR_BIND_ROUTE` (100) — packed index/type, cmp_state, próg w °C×100, `unpack_relay_state_byte`.
+- **Integracja:** IDENTIFY i SET_LED_EFFECT → CONFIG broadcast **`0x7F8`** (cel w payload[0]); SET_RELAY / cover 0x7FA bez regresji.
+- **Wersja:** **5.0.42**; sync `tools/sync_addon_integration.ps1`.
+- **Testy:** `test_protocol_remaining_mismatches.py`.
+
+### feat(protocol): phase 2–3 — GET wins over /data cache + shared packers
+- **`protocol.pack`:** wspólne packery (impuls, TOF, 0x7F8/0x7FA, SET_BINDING 16) importowane do `can_gateway/lib/protocol_constants.py` i integracji.
+- **`deep_config` / `BusManager.refresh_module`:** udany deep GET zapisuje katalog; nieudany GET nie nadpisuje `/data` (cache + `config_stale`).
+- **`get_all_gpio_roles`:** timeout nie zeruje poprzednich ról do Unused.
+- unique_id encji bez zmian (ten sam `entity_export`).
+
+### feat(protocol): opcode constants from shared catalog (phase 1)
+- **`protocol_opcodes_gen.py`** (add-on lib + integration): generated from parent repo `protocol/commands.yaml` via `tools/generate_protocol_constants.py`.
+- **`protocol_constants.py` / `protocol.py`:** import generated `COMMAND_*` (no hand-duplicated opcode numbers); relative import with flat-module fallback for tests.
+- Opcode values unchanged (alignment vs firmware `command_ids.gen.h`).
+
+## 2026-09-24 (add-on + integration v5.0.41)
+
+### fix: etykieta «Impuls» = impuls przekaźnika (nie TOGGLE)
+- **`can_gateway/lib/protocol_constants.py`:** `parse_binding_state_label("Impuls")` → `BIND_RELAY_STATE_USE_PULSE` + `pack_set_binding_args` z `BINDING_FLAG_USE_RELAY_PULSE` (alignment z konfiguratorem Windows USB-CAN).
+- **Wersja:** **5.0.41**.
+
 ## 2026-09-24 (add-on + integration v5.0.40)
 
 ### fix: cover / shutter TX na broadcast 0x7FA (parity z hub HOST path)

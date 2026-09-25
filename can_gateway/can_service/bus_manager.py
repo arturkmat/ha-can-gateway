@@ -1164,7 +1164,8 @@ class BusManager:
             return {"ok": False, "error": "bus busy (scan/refresh in progress)"}
         try:
             result = _refresh_module_deep_impl(self, module_id)
-            if result.get("ok"):
+            # Persist only when GET succeeded — failed GET must not wipe /data cache.
+            if result.get("ok") and not result.get("config_stale"):
                 self.persist_discovery_state()
             return result
         finally:

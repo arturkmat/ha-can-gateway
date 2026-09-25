@@ -17,7 +17,7 @@ from .entity_helpers import (
     get_catalog_refresh,
     get_coordinator,
 )
-from .protocol import COMMAND_IDENTIFY, can_v2_config_request_id
+from .protocol import COMMAND_IDENTIFY, can_v2_config_request_id, can_v2_config_request_id_for_command
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -270,7 +270,7 @@ class GatewayIdentifySelectedButton(GatewayBaseButton):
                 return
             module_id = known[0]
         await self._can_send(
-            can_v2_config_request_id(int(module_id)),
+            can_v2_config_request_id_for_command(int(module_id), COMMAND_IDENTIFY),
             [int(module_id), COMMAND_IDENTIFY, 5, 0, 0, 0, 0, 0],
             False,
             False,

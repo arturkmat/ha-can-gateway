@@ -128,6 +128,9 @@ class ModuleContext:
     sensors: list[dict[str, Any]] = field(default_factory=list)
     sensor_scan: dict[str, Any] | None = None
     button_timing: dict[str, int] = field(default_factory=dict)
+    # Phase 2: module NVS via GET is truth; disk JSON is cache only.
+    config_from_module: bool = False
+    config_stale: bool = False
 
 
 class ConfiguratorEngine:
@@ -721,6 +724,10 @@ class ConfiguratorEngine:
             "relay_count": ctx.relay_count,
             "shutter_count": ctx.shutter_count,
             "last_seen_s": ctx.last_seen_s,
+            "config_source": "module" if ctx.config_from_module and not ctx.config_stale else (
+                "stale" if ctx.config_stale else "cache"
+            ),
+            "config_stale": bool(ctx.config_stale),
             "runtime": runtime,
             "control_relays": control_relays,
         }
@@ -984,15 +991,24 @@ class ConfiguratorEngine:
             return
         gpios = self._profile_gpios(profile)
         occupied: set[int] = set()
+        prev = dict(ctx.gpio_info)
+        ok_count = 0
         for gpio in gpios:
             resp = self.send_request(mid, COMMAND_GET_GPIO_ROLE, [gpio], timeout=0.1, log_traffic=False)
             if resp and len(resp) >= 7 and resp[2] == 0:
+                ok_count += 1
                 role_code = int(resp[3])
                 ctx.gpio_info[gpio] = {"role": role_code, "index": int(resp[4]), "flags": int(resp[5])}
                 if role_code != PIN_ROLE_MAP["Unused"]:
                     occupied.add(gpio)
+            elif gpio in prev:
+                ctx.gpio_info[gpio] = prev[gpio]
+                if int(prev[gpio].get("role", 0)) != PIN_ROLE_MAP["Unused"]:
+                    occupied.add(gpio)
             else:
                 ctx.gpio_info[gpio] = {"role": PIN_ROLE_MAP["Unused"], "index": 0, "flags": 0}
+        ctx.config_from_module = ok_count > 0
+        ctx.config_stale = bool(prev) and ok_count == 0
 
     def read_relay_states_from_module(self) -> None:
         mid = self.current_module_id
